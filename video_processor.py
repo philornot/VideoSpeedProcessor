@@ -207,6 +207,173 @@ class VideoProcessor:
             self.logger.error(f"Błąd detekcji energii: {e}")
             return []
 
+    def _seconds_to_timecode(self, seconds: float, fps: int = 25) -> str:
+        """Konwertuje sekundy na timecode HH:MM:SS:FF."""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        frames = int((seconds % 1) * fps)
+
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}:{frames:02d}"
+
+    def generate_edl(self, results: List[dict], output_path: str):
+        """Generuje plik EDL dla DaVinci Resolve."""
+        self.logger.info(f"Generowanie EDL: {output_path}")
+
+        try:
+            with open(output_path, 'w', encoding='utf-8') as f:
+                # Nagłówek EDL
+                f.write("TITLE: Processed_Videos\n")
+                f.write("FCM: NON-DROP FRAME\n\n")
+
+                edit_number = 1
+                timeline_pos = 0.0  # Pozycja w timeline (w sekundach)
+
+                for result_idx, result in enumerate(results):
+                    if not result:
+                        continue
+
+                    source_name = result['input_name']
+                    reel_name = f"AX{result_idx + 1:03d}"  # AX001, AX002, etc.
+
+                    for segment in result['timeline_data']:
+                        # Konwertuj sekundy na timecode (25fps)
+                        source_in_tc = self._seconds_to_timecode(segment['start'], 25)
+                        source_out_tc = self._seconds_to_timecode(
+                            segment['start'] + segment.get('original_duration', segment['duration']), 25)
+
+                        timeline_in_tc = self._seconds_to_timecode(timeline_pos, 25)
+                        timeline_out_tc = self._seconds_to_timecode(timeline_pos + segment['duration'], 25)
+
+                        # Linia EDL
+                        # Format: EDIT_NUM REEL TRACK EDIT_TYPE SOURCE_IN SOURCE_OUT TIMELINE_IN TIMELINE_OUT
+                        edit_type = "C"  # Cut
+                        track = "V"  # Video track
+
+                        f.write(f"{edit_number:03d}  {reel_name:<8} {track}     {edit_type}        ")
+                        f.write(f"{source_in_tc} {source_out_tc} {timeline_in_tc} {timeline_out_tc}\n")
+
+                        # Dodaj informacje o efektach dla przyspieszonych segmentów
+                        if segment['speed'] != 1.0:
+                            # Motion effect dla DaVinci
+                            f.write(f"* FROM CLIP NAME: {source_name}\n")
+                            f.write(f"* SPEED: {segment['speed']:.2f}\n")
+                            f.write(f"* SEGMENT TYPE: {segment['type']}\n")
+
+                            # Dla DaVinci - parametry speed ramping
+                            speed_percent = segment['speed'] * 100
+                            f.write(
+                                f"M2   {reel_name:<8}     {timeline_in_tc} {timeline_out_tc} {speed_percent:06.2f} {speed_percent:06.2f}\n")
+                        else:
+                            f.write(f"* FROM CLIP NAME: {source_name}\n")
+                            f.write(f"* SEGMENT TYPE: {segment['type']}\n")
+
+                        f.write("\n")  # Pusta linia między edytami
+
+                        edit_number += 1
+                        timeline_pos += segment['duration']
+
+                # Dodaj informacje o źródłach na końcu
+                f.write("* SOURCE FILE MAPPING:\n")
+                for result_idx, result in enumerate(results):
+                    if result:
+                        reel_name = f"AX{result_idx + 1:03d}"
+                        source_path = os.path.abspath(result['input_file'])
+                        f.write(f"* {reel_name}: {source_path}\n")
+
+            self.logger.info(f"EDL zapisany: {output_path}")
+            self.logger.info(f"Timeline zawiera {edit_number - 1} edytów")
+            self.logger.info(f"Całkowity czas: {timeline_pos:.2f}s")
+
+        except Exception as e:
+            self.logger.error(f"Błąd generowania EDL: {e}")
+            import traceback
+            self.logger.error(f"Szczegóły błędu: {traceback.format_exc()}")
+
+    def generate_avid_log(self, results: List[dict], output_path: str):
+        """Generuje plik Avid Log Exchange (ALE) jako alternatywę."""
+        self.logger.info(f"Generowanie ALE: {output_path}")
+
+        try:
+            with open(output_path, 'w', encoding='utf-8') as f:
+                # Nagłówek ALE
+                f.write("Heading\n")
+                f.write("FIELD_DELIM\tTABS\n")
+                f.write("VIDEO_FORMAT\t1080\n")
+                f.write("AUDIO_FORMAT\t48kHz\n")
+                f.write("FPS\t25\n\n")
+
+                f.write("Column\n")
+                f.write("Name\tTape\tStart\tEnd\tDuration\tSpeed\tType\tSource File\n\n")
+
+                f.write("Data\n")
+
+                for result_idx, result in enumerate(results):
+                    if not result:
+                        continue
+
+                    source_name = result['input_name']
+                    tape_name = f"AX{result_idx + 1:03d}"
+
+                    for clip_idx, segment in enumerate(result['timeline_data']):
+                        clip_name = f"{source_name}_{clip_idx + 1:02d}"
+
+                        start_tc = self._seconds_to_timecode(segment['start'], 25)
+                        end_tc = self._seconds_to_timecode(
+                            segment['start'] + segment.get('original_duration', segment['duration']), 25)
+                        duration_tc = self._seconds_to_timecode(segment['duration'], 25)
+
+                        f.write(f"{clip_name}\t{tape_name}\t{start_tc}\t{end_tc}\t{duration_tc}\t")
+                        f.write(f"{segment['speed']:.1f}x\t{segment['type']}\t{result['input_file']}\n")
+
+            self.logger.info(f"ALE zapisany: {output_path}")
+
+        except Exception as e:
+            self.logger.error(f"Błąd generowania ALE: {e}")
+
+    def generate_csv_timeline(self, results: List[dict], output_path: str):
+        """Generuje prosty CSV z informacjami o timeline."""
+        self.logger.info(f"Generowanie CSV timeline: {output_path}")
+
+        try:
+            import csv
+
+            with open(output_path, 'w', newline='', encoding='utf-8') as csvfile:
+                fieldnames = ['Edit_Number', 'Source_File', 'Timeline_Start', 'Timeline_End',
+                              'Source_Start', 'Source_End', 'Duration', 'Speed', 'Type', 'Notes']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+                writer.writeheader()
+
+                edit_number = 1
+                timeline_pos = 0.0
+
+                for result in results:
+                    if not result:
+                        continue
+
+                    for segment in result['timeline_data']:
+                        writer.writerow({
+                            'Edit_Number': edit_number,
+                            'Source_File': result['input_name'],
+                            'Timeline_Start': f"{timeline_pos:.3f}s",
+                            'Timeline_End': f"{timeline_pos + segment['duration']:.3f}s",
+                            'Source_Start': f"{segment['start']:.3f}s",
+                            'Source_End': f"{segment['start'] + segment.get('original_duration', segment['duration']):.3f}s",
+                            'Duration': f"{segment['duration']:.3f}s",
+                            'Speed': f"{segment['speed']:.1f}x",
+                            'Type': segment['type'],
+                            'Notes': f"Original duration: {segment.get('original_duration', segment['duration']):.3f}s"
+                        })
+
+                        edit_number += 1
+                        timeline_pos += segment['duration']
+
+            self.logger.info(f"CSV zapisany: {output_path}")
+
+        except Exception as e:
+            self.logger.error(f"Błąd generowania CSV: {e}")
+
     def create_simple_overlay(self, duration: float, speed: float, size: Tuple[int, int]) -> mp.VideoClip:
         """Tworzy prosty overlay bez tekstu (fallback dla braku ImageMagick)."""
         try:
@@ -558,6 +725,8 @@ class VideoProcessor:
             import traceback
             self.logger.error(f"Szczegóły błędu: {traceback.format_exc()}")
 
+
+
     def combine_videos(self, results: List[dict], output_path: str):
         """Łączy wszystkie przetworzone wideo w jeden plik."""
         self.logger.info("Łączenie wszystkich wideo...")
@@ -620,10 +789,28 @@ class VideoProcessor:
         with open(timeline_json, 'w', encoding='utf-8') as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
 
+        # Skopiuj oryginalne pliki do folderu wyjściowego (dla timeline)
+        if self.config.generate_timeline:
+            self.copy_source_files_to_output(results, str(output_folder))
+
         # Generuj timeline jeśli wymagane
         if self.config.generate_timeline:
-            fcpxml_path = output_folder / "timeline.fcpxml"
-            self.generate_fcpxml(results, str(fcpxml_path))
+            # Generuj EDL (główny format)
+            edl_path = output_folder / "timeline.edl"
+            self.generate_edl(results, str(edl_path))
+
+            # Generuj ALE jako alternatywę
+            ale_path = output_folder / "timeline.ale"
+            self.generate_avid_log(results, str(ale_path))
+
+            # Generuj CSV dla ułatwienia
+            csv_path = output_folder / "timeline.csv"
+            self.generate_csv_timeline(results, str(csv_path))
+
+            # Opcjonalnie zachowaj FCPXML
+            if hasattr(self.config, 'generate_fcpxml') and self.config.generate_fcpxml:
+                fcpxml_path = output_folder / "timeline.fcpxml"
+                self.generate_fcpxml(results, str(fcpxml_path))
 
         # Połącz wideo jeśli wymagane
         if self.config.combine_clips and self.config.generate_video:
@@ -634,7 +821,9 @@ class VideoProcessor:
         print(f"\n✅ Przetworzono {len(results)} plików")
         print(f"📁 Wyniki zapisane w: {output_folder}")
         if self.config.generate_timeline:
-            print(f"🎬 Timeline FCPXML: {output_folder}/timeline.fcpxml")
+            print(f"🎬 Timeline EDL: {output_folder}/timeline.edl")
+            print(f"📊 Timeline ALE: {output_folder}/timeline.ale")
+            print(f"📋 Timeline CSV: {output_folder}/timeline.csv")
 
 
 def check_imagemagick():
@@ -681,6 +870,7 @@ Przykłady użycia:
   python video_processor.py --input_folder videos/ --speed_multiplier 3.0
   python video_processor.py --input_folder clips/ --speed_multiplier 2.5 --generate_video --combine_clips
   python video_processor.py --input_folder input/ --use_whisper --min_silence_duration 2.0
+  python video_processor.py --input_folder input/ --speed_multiplier 3.0 --generate_fcpxml
         """
     )
 
@@ -695,7 +885,9 @@ Przykłady użycia:
     parser.add_argument('--generate_video', action='store_true',
                         help='Generuj gotowe pliki MP4')
     parser.add_argument('--generate_timeline', action='store_true', default=True,
-                        help='Generuj timeline FCPXML (domyślnie: True)')
+                        help='Generuj timeline EDL/ALE/CSV (domyślnie: True)')
+    parser.add_argument('--generate_fcpxml', action='store_true',
+                        help='Generuj również FCPXML (opcjonalnie)')
     parser.add_argument('--combine_clips', action='store_true',
                         help='Połącz wszystkie klipy w jeden film')
     parser.add_argument('--use_whisper', action='store_true',

@@ -232,13 +232,6 @@ type video_processor.log  # Windows
 
 MIT License - you can freely use and modify.
 
-## 🙏 Acknowledgments
-
-- **MoviePy** - video processing
-- **Librosa** - audio analysis  
-- **WebRTC VAD** - speech detection
-- **OpenAI Whisper** - AI transcription
-
 ---
 
 **Happy editing! 🎬✨**
