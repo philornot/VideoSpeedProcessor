@@ -1,5 +1,10 @@
 /venv
 /.idea
 /output
+
 *.log
 *.mp4
+*.wav
+
+/test_imagemagick.py
+/video_processor_fixed.py

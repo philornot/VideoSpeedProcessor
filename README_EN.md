@@ -1,6 +1,6 @@
 # Video Speed Processor
 
-Automatically process SteelSeries Moments recordings - speed up silent segments while maintaining editability in DaVinci Resolve.
+Automatically process recordings - speed up silent segments while maintaining editability in DaVinci Resolve.
 
 ## 🎯 Project Goal
 
@@ -85,7 +85,7 @@ python video_processor.py --input_folder "input/" --speed_multiplier 3.0 --use_w
 ### Batch Processing
 ```bash
 # Process all folders with recordings
-python batch_processor.py --input_root "D:\SteelSeries\Moments" --speed_multiplier 3.0
+python batch_processor.py --input_root "D:\Recordings\awesomegameplayclips" --speed_multiplier 3.0
 
 # With automatic confirmation
 python batch_processor.py --input_root "recordings/" --speed_multiplier 2.5 --auto_confirm
@@ -165,7 +165,7 @@ pip install moviepy librosa numpy
 ```bash
 # Copy recordings to folder
 mkdir input
-copy "C:\Users\Username\Videos\SteelSeries\*.mp4" input\
+copy "C:\Users\Username\Videos\*.mp4" input\
 ```
 
 ### 2. Processing

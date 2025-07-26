@@ -1,50 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Video Speed Processor for SteelSeries Moments
+Video Speed Processor
 Automatycznie przetwarza nagrania wideo, przyspieszając fragmenty ciszy
 i eksportując do DaVinci Resolve.
 """
 
 import argparse
+import json
+import logging
 import os
 import sys
-import logging
 from pathlib import Path
-from typing import List, Tuple, Optional
-import json
-
+from typing import List, Tuple
 
 # Importy zewnętrzne
-def check_dependencies():
-    """Sprawdza dostępność wymaganych bibliotek."""
-    missing_libs = []
-
-    try:
-        import moviepy.editor as mp
-    except ImportError:
-        missing_libs.append("moviepy")
-
-    try:
-        import librosa
-        import numpy as np
-    except ImportError:
-        missing_libs.append("librosa i numpy")
-
-    if missing_libs:
-        print("❌ Błąd: Brak wymaganych bibliotek:")
-        for lib in missing_libs:
-            print(f"   • {lib}")
-        print("\n🔧 Rozwiązanie:")
-        print("   1. Aktywuj środowisko: venv\\Scripts\\activate")
-        print("   2. Zainstaluj biblioteki: pip install -r requirements.txt")
-        print("   3. Lub użyj: run_processor.bat zamiast python video_processor.py")
-        sys.exit(1)
-
-
-# Sprawdź zależności na początku
-check_dependencies()
-
 try:
     import moviepy.editor as mp
     from moviepy.video.tools.drawing import color_gradient
@@ -237,28 +207,82 @@ class VideoProcessor:
             self.logger.error(f"Błąd detekcji energii: {e}")
             return []
 
+    def create_simple_overlay(self, duration: float, speed: float, size: Tuple[int, int]) -> mp.VideoClip:
+        """Tworzy prosty overlay bez tekstu (fallback dla braku ImageMagick)."""
+        try:
+            # Utwórz kolorowy prostokąt jako wskaźnik przyspieszenia
+            import numpy as np
+
+            # Rozmiar prostokąta zależny od prędkości
+            rect_size = int(min(size[0], size[1]) * 0.05)  # 5% rozmiaru ekranu
+
+            # Kolor zależny od prędkości (czerwony = szybko, żółty = średnio)
+            if speed >= 4.0:
+                color = [255, 0, 0]  # Czerwony
+            elif speed >= 2.5:
+                color = [255, 165, 0]  # Pomarańczowy
+            else:
+                color = [255, 255, 0]  # Żółty
+
+            # Stwórz prostokąt
+            def make_frame(t):
+                frame = np.zeros((size[1], size[0], 3), dtype=np.uint8)
+
+                # Pozycja w prawym dolnym rogu
+                margin = rect_size // 2
+                y_start = size[1] - rect_size - margin
+                y_end = size[1] - margin
+                x_start = size[0] - rect_size - margin
+                x_end = size[0] - margin
+
+                # Rysuj prostokąt
+                frame[y_start:y_end, x_start:x_end] = color
+
+                # Dodaj miganie dla większej widoczności
+                if int(t * 2) % 2 == 0:  # Migaj co 0.5s
+                    frame[y_start:y_end, x_start:x_end] = [min(c + 50, 255) for c in color]
+
+                return frame
+
+            overlay = mp.VideoClip(make_frame, duration=duration)
+            overlay = overlay.set_opacity(0.8)  # Półprzezroczysty
+
+            return overlay
+
+        except Exception as e:
+            self.logger.warning(f"Nie można utworzyć prostego overlay: {e}")
+            return None
+
     def create_speed_overlay(self, duration: float, speed: float, size: Tuple[int, int]) -> mp.VideoClip:
-        """Tworzy overlay z tekstem prędkości."""
+        """Tworzy overlay z tekstem prędkości bez ImageMagick."""
         if speed == 1.0:
             return None
 
         text = f"x{speed:.1f}" if speed != int(speed) else f"x{int(speed)}"
 
-        # Utwórz tekstowy klip
-        txt_clip = mp.TextClip(
-            text,
-            fontsize=min(size[0], size[1]) // 20,  # Dynamiczny rozmiar czcionki
-            color='white',
-            font='Arial-Bold',
-            stroke_color='black',
-            stroke_width=2
-        ).set_duration(duration)
+        try:
+            # Próbuj użyć TextClip (wymaga ImageMagick)
+            txt_clip = mp.TextClip(
+                text,
+                fontsize=min(size[0], size[1]) // 20,
+                color='white',
+                font='Arial-Bold',
+                stroke_color='black',
+                stroke_width=2
+            ).set_duration(duration)
 
-        # Pozycjonuj w prawym dolnym rogu
-        margin = min(size[0], size[1]) // 40
-        txt_clip = txt_clip.set_position((size[0] - txt_clip.w - margin, size[1] - txt_clip.h - margin))
+            # Pozycjonuj w prawym dolnym rogu
+            margin = min(size[0], size[1]) // 40
+            txt_clip = txt_clip.set_position((size[0] - txt_clip.w - margin, size[1] - txt_clip.h - margin))
 
-        return txt_clip
+            return txt_clip
+
+        except Exception as e:
+            self.logger.warning(f"TextClip niedostępny (brak ImageMagick): {e}")
+            self.logger.info("Tworzę overlay bez tekstu - zainstaluj ImageMagick dla pełnej funkcjonalności")
+
+            # Alternatywa: kolorowy prostokąt jako wskaźnik
+            return self.create_simple_overlay(duration, speed, size)
 
     def process_video_file(self, input_path: str, output_folder: str) -> dict:
         """Przetwarza pojedynczy plik wideo."""
@@ -363,8 +387,34 @@ class VideoProcessor:
             self.logger.error(f"Błąd przetwarzania {input_path}: {e}")
             return None
 
+    def copy_source_files_to_output(self, results: List[dict], output_folder: str):
+        """Kopiuje oryginalne pliki wideo do folderu wyjściowego."""
+        import shutil
+
+        self.logger.info("Kopiowanie oryginalnych plików do folderu wyjściowego...")
+
+        for result in results:
+            if not result:
+                continue
+
+            source_path = result['input_file']
+            source_name = os.path.basename(source_path)
+            dest_path = os.path.join(output_folder, source_name)
+
+            try:
+                if not os.path.exists(dest_path):
+                    shutil.copy2(source_path, dest_path)
+                    self.logger.info(f"Skopiowano: {source_name}")
+
+                # Zaktualizuj ścieżkę w rezultacie
+                result['input_file'] = dest_path
+
+            except Exception as e:
+                self.logger.warning(f"Nie można skopiować {source_name}: {e}")
+
     def generate_fcpxml(self, results: List[dict], output_path: str):
         """Generuje plik FCPXML dla DaVinci Resolve."""
+
         self.logger.info(f"Generowanie FCPXML: {output_path}")
 
         try:
@@ -377,14 +427,48 @@ class VideoProcessor:
             # Zasób projektowy
             resources = SubElement(fcpxml, 'resources')
 
+            # Dodaj assety dla każdego pliku wideo
+            asset_id = 1
+            for result in results:
+                if not result:
+                    continue
+
+                # Dodaj zasób wideo z pełną ścieżką
+                input_file_path = os.path.abspath(result['input_file'])
+                asset = SubElement(resources, 'asset',
+                                   id=f'r{asset_id}',
+                                   name=result['input_name'],
+                                   src=f"file://{input_file_path.replace(os.sep, '/')}",
+                                   duration=f"{result['original_duration']}s")
+                asset_id += 1
+
+            # Dodaj bibliotekę (wymagane przez DaVinci)
+            library = SubElement(fcpxml, 'library')
+
+            # Dodaj event (wymagane przez DaVinci)
+            event = SubElement(library, 'event', name='Processed Videos Event')
+
             # Projekt
-            project = SubElement(fcpxml, 'project', name='Processed_Videos')
+            project = SubElement(event, 'project', name='Processed_Videos')
+
+            # Oblicz całkowity czas trwania timeline (suma wszystkich segmentów)
+            total_duration = 0
+            for result in results:
+                if result and result['timeline_data']:
+                    for segment in result['timeline_data']:
+                        total_duration += segment['duration']
+
+            self.logger.info(f"Obliczony całkowity czas timeline: {total_duration:.2f}s")
+
             sequence = SubElement(project, 'sequence',
                                   format='r1',
-                                  duration='3600s',
-                                  tcStart='0s')
+                                  duration=f'{max(total_duration + 10, 60)}s',  # Min 60s, +10s bufor
+                                  tcStart='0s',
+                                  tcFormat='NDF')
+
             spine = SubElement(sequence, 'spine')
 
+            # Dodaj klipy do timeline
             current_offset = 0
             asset_id = 1
 
@@ -392,46 +476,87 @@ class VideoProcessor:
                 if not result:
                     continue
 
-                # Dodaj zasób wideo
-                asset = SubElement(resources, 'asset',
-                                   id=f'r{asset_id}',
-                                   name=result['input_name'],
-                                   src=result['input_file'],
-                                   duration=f"{result['original_duration']}s")
-
-                # Dodaj klipy do timeline
+                # Dodaj klipy do timeline dla każdego segmentu
                 for segment in result['timeline_data']:
-                    clip = SubElement(spine, 'video',
-                                      ref=f'r{asset_id}',
-                                      offset=f'{current_offset}s',
-                                      duration=f"{segment['duration']}s",
-                                      start=f"{segment['start']}s")
+                    # Oblicz dokładne czasy
+                    clip_duration = segment['duration']
+                    source_start = segment['start']  # Początek w oryginalnym pliku
+                    source_duration = segment.get('original_duration', clip_duration)
 
-                    # Dodaj informacje o prędkości jako efekt
+                    # Podstawowe atrybuty klipu
+                    clip_attrs = {
+                        'ref': f'r{asset_id}',
+                        'offset': f'{current_offset}s',
+                        'duration': f'{clip_duration}s'
+                    }
+
+                    # Dla segmentów ciszy (przyspieszonych) dodaj start/end
                     if segment['speed'] != 1.0:
-                        effect = SubElement(clip, 'timeMap')
-                        timept = SubElement(effect, 'timept',
-                                            time='0s',
-                                            value='0s')
-                        timept2 = SubElement(effect, 'timept',
-                                             time=f"{segment['duration']}s",
-                                             value=f"{segment['original_duration']}s")
+                        clip_attrs['start'] = f'{source_start}s'
+                        clip_attrs['end'] = f'{source_start + source_duration}s'
+                    else:
+                        # Dla normalnych segmentów też dodaj start/end
+                        clip_attrs['start'] = f'{source_start}s'
+                        clip_attrs['end'] = f'{source_start + source_duration}s'
 
-                    current_offset += segment['duration']
+                    clip = SubElement(spine, 'video', **clip_attrs)
+
+                    # Dodaj efekt prędkości dla przyspieszonych segmentów
+                    if segment['speed'] != 1.0:
+                        # Użyj timeMap dla kontroli prędkości
+                        timemap = SubElement(clip, 'timeMap')
+
+                        # Punkt początkowy
+                        timept1 = SubElement(timemap, 'timept')
+                        timept1.set('time', '0s')
+                        timept1.set('value', '0s')
+                        timept1.set('interp', 'smooth2')
+
+                        # Punkt końcowy - mapowanie czasu
+                        timept2 = SubElement(timemap, 'timept')
+                        timept2.set('time', f'{clip_duration}s')  # Czas w timeline
+                        timept2.set('value', f'{source_duration}s')  # Czas w źródle
+                        timept2.set('interp', 'smooth2')
+
+                        # Dodaj audio remap jeśli potrzebne
+                        audio_map = SubElement(clip, 'audioRoleMap')
+                        audio_map.set('enabled', 'false')  # Wyłącz audio dla przyspieszonych
+
+                    # Debug info jako komentarz
+                    comment = SubElement(clip, 'note')
+                    comment.text = f"Speed: {segment['speed']}x, Type: {segment['type']}, Source: {source_start}-{source_start + source_duration}"
+
+                    current_offset += clip_duration
 
                 asset_id += 1
 
-            # Zapisz XML
+            # Dodaj podstawowe ustawienia projektu
+            project_settings = SubElement(sequence, 'projectSettings')
+            project_settings.set('width', '1920')
+            project_settings.set('height', '1080')
+            project_settings.set('frameDuration', '1/25s')
+            project_settings.set('audioLayout', 'stereo')
+            project_settings.set('audioRate', '48k')
+
+            # Zapisz XML z lepszym formatowaniem
             rough_string = tostring(fcpxml, 'utf-8')
             reparsed = minidom.parseString(rough_string)
 
+            # Usuń puste linie i popraw formatowanie
+            pretty_xml = reparsed.toprettyxml(indent='  ')
+            pretty_xml = '\n'.join([line for line in pretty_xml.split('\n') if line.strip()])
+
             with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(reparsed.toprettyxml(indent='  '))
+                f.write(pretty_xml)
 
             self.logger.info(f"FCPXML zapisany: {output_path}")
+            self.logger.info(f"Timeline zawiera {len([r for r in results if r])} plików wideo")
+            self.logger.info(f"Całkowity czas: {total_duration:.2f}s")
 
         except Exception as e:
             self.logger.error(f"Błąd generowania FCPXML: {e}")
+            import traceback
+            self.logger.error(f"Szczegóły błędu: {traceback.format_exc()}")
 
     def combine_videos(self, results: List[dict], output_path: str):
         """Łączy wszystkie przetworzone wideo w jeden plik."""
@@ -512,10 +637,44 @@ class VideoProcessor:
             print(f"🎬 Timeline FCPXML: {output_folder}/timeline.fcpxml")
 
 
+def check_imagemagick():
+    """Sprawdza czy ImageMagick jest dostępny."""
+    try:
+        # Wymuś użycie naszej ścieżki
+        os.environ['IMAGEMAGICK_BINARY'] = r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
+
+        import moviepy.editor as mp
+        import moviepy.config as mp_config
+        mp_config.IMAGEMAGICK_BINARY = r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
+
+        # Test czy TextClip działa
+        test_clip = mp.TextClip("test", fontsize=20, color='white').set_duration(0.1)
+        test_clip.close()
+        return True
+    except Exception as e:
+        print(f"ImageMagick test failed: {e}")
+        return False
+
+
+def print_imagemagick_instructions():
+    """Wyświetla instrukcje instalacji ImageMagick."""
+    print("\n" + "=" * 60)
+    print("⚠️  UWAGA: ImageMagick nie jest zainstalowany")
+    print("=" * 60)
+    print("Overlay tekstowy (x3) nie będzie wyświetlany.")
+    print("Zamiast tego użyję kolorowego wskaźnika.\n")
+    print("🔧 Aby naprawić (opcjonalne):")
+    print("1. Pobierz ImageMagick: https://imagemagick.org/script/download.php#windows")
+    print("2. Podczas instalacji zaznacz 'Install development headers'")
+    print("3. Lub przez chocolatey: choco install imagemagick")
+    print("4. Uruchom skrypt ponownie")
+    print("=" * 60 + "\n")
+
+
 def main():
     """Główna funkcja programu."""
     parser = argparse.ArgumentParser(
-        description="Video Speed Processor - automatyczne przetwarzanie nagrań SteelSeries Moments",
+        description="Video Speed Processor - automatyczne przetwarzanie nagrań .mp4",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Przykłady użycia:
@@ -545,6 +704,10 @@ Przykłady użycia:
                         help='Włącz tryb debugowania')
 
     args = parser.parse_args()
+
+    # Sprawdź ImageMagick
+    if not check_imagemagick():
+        print_imagemagick_instructions()
 
     # Sprawdź czy folder wejściowy istnieje
     if not os.path.exists(args.input_folder):

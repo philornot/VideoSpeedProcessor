@@ -1,6 +1,6 @@
 # Video Speed Processor
 
-Automatyczne przetwarzanie nagrań wideo z SteelSeries Moments - przyspiesza fragmenty ciszy zachowując edytowalność w DaVinci Resolve.
+Automatyczne przetwarzanie nagrań wideo - przyspiesza fragmenty ciszy zachowując edytowalność w DaVinci Resolve.
 
 ## 🎯 Cel projektu
 
@@ -19,6 +19,7 @@ Program automatycznie wykrywa fragmenty ciszy w nagraniach wideo, przyspiesza je
 
 - **Python 3.11+**
 - **FFmpeg** (w PATH)
+- **ImageMagick** (dla overlayów tekstowych)
 - **Windows 10/11** (głównie testowane)
 
 ### Instalacja FFmpeg
@@ -28,6 +29,20 @@ choco install ffmpeg
 
 # Ręcznie: pobierz z https://ffmpeg.org/ i dodaj do PATH
 ```
+
+### Instalacja ImageMagick
+```bash
+# Automatycznie (zalecane)
+python install_imagemagick.py
+
+# Przez chocolatey
+choco install imagemagick
+
+# Ręcznie: pobierz z https://imagemagick.org/script/download.php#windows
+# WAŻNE: Podczas instalacji zaznacz "Install development headers"
+```
+
+**💡 Bez ImageMagick:** Program będzie działał, ale zamiast tekstu "x3" pokaże kolorowy wskaźnik.
 
 ## 🚀 Instalacja
 
@@ -84,7 +99,7 @@ python video_processor.py --input_folder "input/" --speed_multiplier 3.0 --use_w
 ### Batch processing
 ```bash
 # Przetwórz wszystkie foldery z nagraniami
-python batch_processor.py --input_root "D:\SteelSeries\Moments" --speed_multiplier 3.0
+python batch_processor.py --input_root "D:\Recordings\awesomegameplayclips" --speed_multiplier 3.0
 
 # Z automatycznym potwierdzeniem
 python batch_processor.py --input_root "recordings/" --speed_multiplier 2.5 --auto_confirm
@@ -130,14 +145,16 @@ output/
 
 ## 🔧 Rozwiązywanie problemów
 
-### FFmpeg nie działa
+### ImageMagick nie działa
 ```bash
-# Sprawdź instalację
-ffmpeg -version
+# Instalacja
+choco install imagemagick
 
-# Zainstaluj przez chocolatey
-choco install ffmpeg
+# Sprawdź instalację
+magick -version
 ```
+
+**Bez ImageMagick:** Program używa kolorowych wskaźników zamiast tekstu
 
 ### Brak bibliotek
 ```bash
@@ -164,7 +181,7 @@ pip install moviepy librosa numpy
 ```bash
 # Skopiuj nagrania do folderu
 mkdir input
-copy "C:\Users\Username\Videos\SteelSeries\*.mp4" input\
+copy "C:\Users\Username\Videos\*.mp4" input\
 ```
 
 ### 2. Przetwarzanie

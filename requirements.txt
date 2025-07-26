@@ -16,3 +16,13 @@ pathlib2>=2.3.7; python_version < '3.4'
 
 # Opcjonalne: progressbar dla lepszego UX
 tqdm>=4.64.0
+
+# Dla instalatora ImageMagick
+requests>=2.28.0
+
+# UWAGA: ImageMagick jest wymagany do overlayów tekstowych
+# Zainstaluj przez:
+# - Windows: choco install imagemagick
+# - Ubuntu: sudo apt-get install imagemagick
+# - Mac: brew install imagemagick
+# Lub uruchom: python install_imagemagick.py
