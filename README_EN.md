@@ -237,24 +237,6 @@ Your timeline with automatic speed effects is ready for further editing!
 
 ---
 
-## 🚑 Support
-
-* **GitHub Issues** - bugs and feature requests
-* **GitHub Discussions** - questions and tips
-* **Wiki** - in-depth guides
-* **Twitter/X** - news and updates
-
-To report a bug:
-
-```bash
-python --version
-ffmpeg -version
-pip list | grep -E "(moviepy|librosa|whisper|webrtc)"
-cat video_processor.log
-```
-
----
-
 ## 📈 Example Use Cases
 
 ### 🎮 Gaming Creator

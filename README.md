@@ -449,44 +449,6 @@ pip list | grep -E "(moviepy|librosa|numpy|whisper|webrtc)"
 
 ---
 
-## 🆘 **Wsparcie i community**
-
-### **📞 Gdzie szukać pomocy**
-
-1. **📋 Issues na GitHub** - błędy i feature requesty
-2. **💬 Discussions** - pytania i pomysły
-3. **📖 Wiki** - szczegółowe tutoriale
-4. **🐦 Twitter/X** - aktualizacje i tips
-
-### **🐛 Zgłaszanie błędów**
-
-**Przy zgłaszaniu załącz:**
-
-```bash
-# Informacje o systemie
-python --version
-ffmpeg -version
-pip list | grep -E "(moviepy|librosa)"
-
-# Logi z programu
-video_speed_processor.log
-
-# Parametry wywołania
-# Np. "3x speed, Whisper, 45-min video"
-```
-
-### **🤝 Contribution**
-
-**Chcesz pomóc?**
-
-- 🐛 **Bug reports** - znajdź i zgłoś błędy
-- 💡 **Feature ideas** - zaproponuj nowe funkcje
-- 🔧 **Code contributions** - popraw lub dodaj kod
-- 📖 **Documentation** - ulepsz dokumentację
-- 🌍 **Translations** - przetłumacz na inne języki
-
----
-
 ## 📈 **Przykładowe przypadki użycia**
 
 ### **🎮 Gaming Content Creator**
