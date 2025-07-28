@@ -66,7 +66,7 @@
 
 ```bash
 # Sklonuj repozytorium
-git clone <repo-url>
+git clone https://github.com/philornot/VideoSpeedProcessor
 cd video-speed-processor
 
 # Zainstaluj wszystko jedną komendą
