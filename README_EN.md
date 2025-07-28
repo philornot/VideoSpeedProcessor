@@ -3,10 +3,10 @@
 > **Automatically speed up silence in video recordings with a GUI**
 > Save editing time — speed up only the silent parts and keep speech natural!
 
-[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com)
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/philornot/VideoSpeedProcessor)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/Status-Stable-brightgreen.svg)](https://github.com)
+[![Status](https://img.shields.io/badge/AIslop-violet.svg)](https://github.com/philornot/VideoSpeedProcessor)
 
 ---
 
