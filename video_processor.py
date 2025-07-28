@@ -569,173 +569,173 @@ class VideoProcessor:
             return None
 
 
-            def process_video_file(self, input_path: str, output_folder: str) -> dict:
-                """Przetwarza pojedynczy plik wideo - BEZ OVERLAYÓW W KLIPACH."""
-                self.logger.info(f"Przetwarzanie: {input_path}")
+    def process_video_file(self, input_path: str, output_folder: str) -> dict:
+        """Przetwarza pojedynczy plik wideo - BEZ OVERLAYÓW W KLIPACH."""
+        self.logger.info(f"Przetwarzanie: {input_path}")
 
-                try:
-                    # Wczytaj wideo
-                    video = mp.VideoFileClip(input_path)
+        try:
+            # Wczytaj wideo
+            video = mp.VideoFileClip(input_path)
 
-                    # Wyodrębnij audio do tymczasowego pliku
-                    temp_audio = os.path.join(output_folder, "temp_audio.wav")
-                    video.audio.write_audiofile(temp_audio, verbose=False, logger=None)
+            # Wyodrębnij audio do tymczasowego pliku
+            temp_audio = os.path.join(output_folder, "temp_audio.wav")
+            video.audio.write_audiofile(temp_audio, verbose=False, logger=None)
 
-                    # Wykryj segmenty mowy
-                    segments = self.detect_speech_segments(temp_audio)
+            # Wykryj segmenty mowy
+            segments = self.detect_speech_segments(temp_audio)
 
-                    # Usuń tymczasowy plik audio
-                    os.remove(temp_audio)
+            # Usuń tymczasowy plik audio
+            os.remove(temp_audio)
 
-                    if not segments:
-                        self.logger.warning(f"Brak segmentów w: {input_path}")
-                        video.close()
-                        return None
+            if not segments:
+                self.logger.warning(f"Brak segmentów w: {input_path}")
+                video.close()
+                return None
 
-                    # ZMIANA: Nie tworzymy fizycznego wideo z overlayami
-                    # Tylko zbieramy informacje dla EDL
-                    timeline_data = []
+            # ZMIANA: Nie tworzymy fizycznego wideo z overlayami
+            # Tylko zbieramy informacje dla EDL
+            timeline_data = []
 
-                    self.logger.info(f"Przetwarzanie {len(segments)} segmentów")
+            self.logger.info(f"Przetwarzanie {len(segments)} segmentów")
 
-                    for i, (start, end, is_speech) in enumerate(segments):
-                        duration = end - start
+            for i, (start, end, is_speech) in enumerate(segments):
+                duration = end - start
 
-                        self.logger.debug(f"Segment {i+1}: {start:.2f}-{end:.2f}s, "
-                                        f"duration={duration:.2f}s, speech={is_speech}")
+                self.logger.debug(f"Segment {i+1}: {start:.2f}-{end:.2f}s, "
+                                f"duration={duration:.2f}s, speech={is_speech}")
 
-                        if is_speech:
-                            # Fragment mowy - normalne tempo
-                            timeline_data.append({
-                                'start': start,
-                                'end': end,
-                                'duration': duration,
-                                'speed': 1.0,
-                                'type': 'speech',
-                                'has_overlay': False
-                            })
-                            self.logger.debug(f"  -> Mowa: {duration:.2f}s (1.0x)")
-                        else:
-                            # Fragment ciszy - przyspiesz TYLKO jeśli spełnia minimum
-                            if duration >= self.config.min_silence_duration:
-                                speed = self.config.speed_multiplier
-                                new_duration = duration / speed
+                if is_speech:
+                    # Fragment mowy - normalne tempo
+                    timeline_data.append({
+                        'start': start,
+                        'end': end,
+                        'duration': duration,
+                        'speed': 1.0,
+                        'type': 'speech',
+                        'has_overlay': False
+                    })
+                    self.logger.debug(f"  -> Mowa: {duration:.2f}s (1.0x)")
+                else:
+                    # Fragment ciszy - przyspiesz TYLKO jeśli spełnia minimum
+                    if duration >= self.config.min_silence_duration:
+                        speed = self.config.speed_multiplier
+                        new_duration = duration / speed
 
-                                timeline_data.append({
-                                    'start': start,
-                                    'end': end,
-                                    'duration': new_duration,
-                                    'original_duration': duration,
-                                    'speed': speed,
-                                    'type': 'silence',
-                                    'has_overlay': True  # Informacja dla DaVinci
-                                })
-                                self.logger.debug(f"  -> Cisza: {duration:.2f}s -> {new_duration:.2f}s ({speed}x)")
-                            else:
-                                # Krótka cisza - pozostaw normalną
-                                timeline_data.append({
-                                    'start': start,
-                                    'end': end,
-                                    'duration': duration,
-                                    'speed': 1.0,
-                                    'type': 'short_silence',
-                                    'has_overlay': False
-                                })
-                                self.logger.debug(f"  -> Krótka cisza: {duration:.2f}s (1.0x)")
+                        timeline_data.append({
+                            'start': start,
+                            'end': end,
+                            'duration': new_duration,
+                            'original_duration': duration,
+                            'speed': speed,
+                            'type': 'silence',
+                            'has_overlay': True  # Informacja dla DaVinci
+                        })
+                        self.logger.debug(f"  -> Cisza: {duration:.2f}s -> {new_duration:.2f}s ({speed}x)")
+                    else:
+                        # Krótka cisza - pozostaw normalną
+                        timeline_data.append({
+                            'start': start,
+                            'end': end,
+                            'duration': duration,
+                            'speed': 1.0,
+                            'type': 'short_silence',
+                            'has_overlay': False
+                        })
+                        self.logger.debug(f"  -> Krótka cisza: {duration:.2f}s (1.0x)")
 
-                    # Oblicz całkowity czas wyjściowy
-                    output_duration = sum(segment['duration'] for segment in timeline_data)
+            # Oblicz całkowity czas wyjściowy
+            output_duration = sum(segment['duration'] for segment in timeline_data)
 
-                    # Przygotuj nazwy plików wyjściowych
-                    input_name = Path(input_path).stem
+            # Przygotuj nazwy plików wyjściowych
+            input_name = Path(input_path).stem
 
-                    result = {
-                        'input_file': input_path,
-                        'input_name': input_name,
-                        'timeline_data': timeline_data,
-                        'output_duration': output_duration,
-                        'original_duration': video.duration,
-                        'segments_count': len(segments),
-                        'speech_segments': len([s for s in timeline_data if s['type'] == 'speech']),
-                        'silence_segments': len([s for s in timeline_data if s['type'] in ['silence', 'short_silence']])
-                    }
+            result = {
+                'input_file': input_path,
+                'input_name': input_name,
+                'timeline_data': timeline_data,
+                'output_duration': output_duration,
+                'original_duration': video.duration,
+                'segments_count': len(segments),
+                'speech_segments': len([s for s in timeline_data if s['type'] == 'speech']),
+                'silence_segments': len([s for s in timeline_data if s['type'] in ['silence', 'short_silence']])
+            }
 
-                    self.logger.info(f"Rezultat: {result['speech_segments']} segmentów mowy, "
-                                    f"{result['silence_segments']} segmentów ciszy")
-                    self.logger.info(f"Czas: {video.duration:.2f}s -> {output_duration:.2f}s")
+            self.logger.info(f"Rezultat: {result['speech_segments']} segmentów mowy, "
+                            f"{result['silence_segments']} segmentów ciszy")
+            self.logger.info(f"Czas: {video.duration:.2f}s -> {output_duration:.2f}s")
 
-                    # Opcjonalnie: zapisz przetworzone wideo (tylko jeśli requested)
-                    if self.config.generate_video:
-                        self.logger.info("Generowanie wideo z overlayami...")
-                        processed_clips = []
+            # Opcjonalnie: zapisz przetworzone wideo (tylko jeśli requested)
+            if self.config.generate_video:
+                self.logger.info("Generowanie wideo z overlayami...")
+                processed_clips = []
 
-                        for segment in timeline_data:
-                            segment_clip = video.subclip(segment['start'], segment['start'] + segment.get('original_duration', segment['duration']))
+                for segment in timeline_data:
+                    segment_clip = video.subclip(segment['start'], segment['start'] + segment.get('original_duration', segment['duration']))
 
-                            if segment['speed'] != 1.0:
-                                segment_clip = segment_clip.fx(mp.vfx.speedx, segment['speed'])
+                    if segment['speed'] != 1.0:
+                        segment_clip = segment_clip.fx(mp.vfx.speedx, segment['speed'])
 
-                                # Dodaj overlay tylko do wideo (nie do EDL)
-                                overlay = self.create_speed_overlay(
-                                    segment_clip.duration,
-                                    segment['speed'],
-                                    (video.w, video.h)
-                                )
+                        # Dodaj overlay tylko do wideo (nie do EDL)
+                        overlay = self.create_speed_overlay(
+                            segment_clip.duration,
+                            segment['speed'],
+                            (video.w, video.h)
+                        )
 
-                                if overlay:
-                                    segment_clip = mp.CompositeVideoClip([segment_clip, overlay])
+                        if overlay:
+                            segment_clip = mp.CompositeVideoClip([segment_clip, overlay])
 
-                            processed_clips.append(segment_clip)
+                    processed_clips.append(segment_clip)
 
-                        if processed_clips:
-                            final_video = mp.concatenate_videoclips(processed_clips)
-                            output_video_path = os.path.join(output_folder, f"{input_name}_processed.mp4")
-                            final_video.write_videofile(
-                                output_video_path,
-                                codec='libx264',
-                                audio_codec='aac',
-                                verbose=False,
-                                logger=None
-                            )
-                            result['output_video'] = output_video_path
-                            self.logger.info(f"Zapisano wideo: {output_video_path}")
-                            final_video.close()
+                if processed_clips:
+                    final_video = mp.concatenate_videoclips(processed_clips)
+                    output_video_path = os.path.join(output_folder, f"{input_name}_processed.mp4")
+                    final_video.write_videofile(
+                        output_video_path,
+                        codec='libx264',
+                        audio_codec='aac',
+                        verbose=False,
+                        logger=None
+                    )
+                    result['output_video'] = output_video_path
+                    self.logger.info(f"Zapisano wideo: {output_video_path}")
+                    final_video.close()
 
-                    # Zamknij klip
-                    video.close()
-                    return result
+            # Zamknij klip
+            video.close()
+            return result
 
-                except Exception as e:
-                    self.logger.error(f"Błąd przetwarzania {input_path}: {e}")
-                    import traceback
-                    self.logger.error(f"Szczegóły: {traceback.format_exc()}")
-                    return None
+        except Exception as e:
+            self.logger.error(f"Błąd przetwarzania {input_path}: {e}")
+            import traceback
+            self.logger.error(f"Szczegóły: {traceback.format_exc()}")
+            return None
 
 
-            def copy_source_files_to_output(self, results: List[dict], output_folder: str):
-                """Kopiuje oryginalne pliki wideo do folderu wyjściowego - POPRAWIONE ŚCIEŻKI."""
-                import shutil
+    def copy_source_files_to_output(self, results: List[dict], output_folder: str):
+        """Kopiuje oryginalne pliki wideo do folderu wyjściowego - POPRAWIONE ŚCIEŻKI."""
+        import shutil
 
-                self.logger.info("Kopiowanie oryginalnych plików do folderu wyjściowego...")
+        self.logger.info("Kopiowanie oryginalnych plików do folderu wyjściowego...")
 
-                for result in results:
-                    if not result:
-                        continue
+        for result in results:
+            if not result:
+                continue
 
-                    source_path = result['input_file']
-                    source_name = os.path.basename(source_path)
-                    dest_path = os.path.join(output_folder, source_name)
+            source_path = result['input_file']
+            source_name = os.path.basename(source_path)
+            dest_path = os.path.join(output_folder, source_name)
 
-                    try:
-                        if not os.path.exists(dest_path):
-                            shutil.copy2(source_path, dest_path)
-                            self.logger.info(f"Skopiowano: {source_name}")
+            try:
+                if not os.path.exists(dest_path):
+                    shutil.copy2(source_path, dest_path)
+                    self.logger.info(f"Skopiowano: {source_name}")
 
-                        # KLUCZOWA ZMIANA: Zaktualizuj ścieżkę na względną nazwę pliku
-                        result['input_file'] = source_name  # Tylko nazwa pliku, nie pełna ścieżka
+                # KLUCZOWA ZMIANA: Zaktualizuj ścieżkę na względną nazwę pliku
+                result['input_file'] = source_name  # Tylko nazwa pliku, nie pełna ścieżka
 
-                    except Exception as e:
-                        self.logger.warning(f"Nie można skopiować {source_name}: {e}")
+            except Exception as e:
+                self.logger.warning(f"Nie można skopiować {source_name}: {e}")
 
 
     def generate_fcpxml(self, results: List[dict], output_path: str):
