@@ -66,7 +66,7 @@
 
 ```bash
 # Clone the repo
-git clone <repo-url>
+git clone https://github.com/philornot/VideoSpeedProcessor
 cd video-speed-processor
 
 # Install everything in one command
