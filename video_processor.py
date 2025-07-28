@@ -117,249 +117,287 @@ class VideoProcessor:
             self.logger.error(f"Błąd Whisper: {e}")
             return self._detect_speech_energy(audio_path)
 
-    def _detect_speech_webrtc(self, audio_path: str) -> List[Tuple[float, float, bool]]:
-        """Detekcja mowy używając WebRTC VAD."""
-        self.logger.info("Używam WebRTC VAD do detekcji mowy...")
+            def _detect_speech_webrtc(self, audio_path: str) -> List[Tuple[float, float, bool]]:
+                """Detekcja mowy używając WebRTC VAD - ULEPSZONA AGREGACJA."""
+                self.logger.info("Używam WebRTC VAD do detekcji mowy...")
 
-        try:
-            # Wczytaj audio
-            y, sr = librosa.load(audio_path, sr=16000)  # WebRTC wymaga 16kHz
-
-            # Inicjalizuj VAD
-            vad = webrtcvad.Vad(2)  # Agresywność 0-3
-
-            # Podziel na ramki 30ms
-            frame_duration = 0.03  # 30ms
-            frame_length = int(sr * frame_duration)
-
-            segments = []
-            current_start = 0.0
-            current_is_speech = None
-            speech_frames = []
-
-            # Analizuj każdą ramkę
-            for i in range(0, len(y) - frame_length, frame_length):
-                frame = y[i:i + frame_length]
-                frame_time = i / sr
-
-                # Konwertuj do int16
-                frame_int16 = (frame * 32767).astype(np.int16).tobytes()
-
-                # Sprawdź czy to mowa
                 try:
-                    is_speech = vad.is_speech(frame_int16, sr)
-                    speech_frames.append((frame_time, is_speech))
-                except:
-                    # Fallback dla błędnych ramek
-                    speech_frames.append((frame_time, False))
+                    # Wczytaj audio
+                    y, sr = librosa.load(audio_path, sr=16000)  # WebRTC wymaga 16kHz
 
-            # Grupuj ramki w segmenty
-            if not speech_frames:
-                audio_duration = len(y) / sr
-                return [(0.0, audio_duration, False)]
+                    # Inicjalizuj VAD
+                    vad = webrtcvad.Vad(1)  # Mniej agresywny (0-3)
 
-            current_start = 0.0
-            current_is_speech = speech_frames[0][1]
+                    # Podziel na ramki 30ms
+                    frame_duration = 0.03  # 30ms
+                    frame_length = int(sr * frame_duration)
 
-            for frame_time, is_speech in speech_frames:
-                if is_speech != current_is_speech:
-                    # Tylko dodaj segment jeśli spełnia minimalny czas
-                    duration = frame_time - current_start
-                    if duration >= self.config.min_silence_duration or current_is_speech:
-                        segments.append((current_start, frame_time, current_is_speech))
+                    # Analizuj każdą ramkę
+                    speech_frames = []
+                    for i in range(0, len(y) - frame_length, frame_length):
+                        frame = y[i:i + frame_length]
+                        frame_time = i / sr
 
-                    current_start = frame_time
-                    current_is_speech = is_speech
+                        # Konwertuj do int16
+                        frame_int16 = (frame * 32767).astype(np.int16).tobytes()
 
-            # Dodaj ostatni segment
-            audio_duration = len(y) / sr
-            final_duration = audio_duration - current_start
-            if final_duration > 0:
-                segments.append((current_start, audio_duration, current_is_speech))
+                        # Sprawdź czy to mowa
+                        try:
+                            is_speech = vad.is_speech(frame_int16, sr)
+                            speech_frames.append((frame_time, is_speech))
+                        except:
+                            speech_frames.append((frame_time, False))
 
-            # Połącz bardzo krótkie segmenty z sąsiednimi
-            merged_segments = []
-            for start, end, is_speech in segments:
-                duration = end - start
+                    if not speech_frames:
+                        audio_duration = len(y) / sr
+                        return [(0.0, audio_duration, False)]
 
-                # Jeśli segment jest za krótki i to cisza, spróbuj połączyć
-                if duration < self.config.min_silence_duration and not is_speech:
-                    if merged_segments:
-                        # Rozszerz poprzedni segment
-                        prev_start, prev_end, prev_is_speech = merged_segments[-1]
-                        merged_segments[-1] = (prev_start, end, prev_is_speech)
-                    else:
-                        # Pierwszy segment - zostaw jak jest
+                    # KLUCZOWA ZMIANA: Agreguj ramki w większe segmenty
+                    segments = []
+                    current_start = 0.0
+                    current_is_speech = speech_frames[0][1]
+
+                    # Parametry agregacji
+                    min_segment_duration = 0.5  # Minimum 0.5s na segment
+                    speech_merge_gap = 0.3      # Łącz mowę z przerwami < 0.3s
+                    silence_merge_gap = 0.5     # Łącz ciszę z przerwami < 0.5s
+
+                    for frame_time, is_speech in speech_frames:
+                        # Jeśli zmienił się typ segmentu
+                        if is_speech != current_is_speech:
+                            duration = frame_time - current_start
+
+                            # Dodaj segment tylko jeśli ma minimalną długość
+                            if duration >= min_segment_duration:
+                                segments.append((current_start, frame_time, current_is_speech))
+                                current_start = frame_time
+                                current_is_speech = is_speech
+                            # Jeśli za krótki, kontynuuj poprzedni segment
+
+                    # Dodaj ostatni segment
+                    audio_duration = len(y) / sr
+                    final_duration = audio_duration - current_start
+                    if final_duration >= min_segment_duration:
+                        segments.append((current_start, audio_duration, current_is_speech))
+
+                    # POST-PROCESSING: Połącz podobne segmenty z krótkimi przerwami
+                    merged_segments = []
+                    i = 0
+                    while i < len(segments):
+                        start, end, is_speech = segments[i]
+
+                        # Sprawdź czy można połączyć z następnym
+                        while i + 1 < len(segments):
+                            next_start, next_end, next_is_speech = segments[i + 1]
+                            gap = next_start - end
+
+                            # Połącz jeśli:
+                            # 1. Ten sam typ (mowa/cisza)
+                            # 2. Krótka przerwa między segmentami
+                            merge_gap = speech_merge_gap if is_speech else silence_merge_gap
+
+                            if next_is_speech == is_speech and gap <= merge_gap:
+                                # Połącz segmenty
+                                end = next_end
+                                i += 1
+                            else:
+                                break
+
                         merged_segments.append((start, end, is_speech))
-                else:
-                    merged_segments.append((start, end, is_speech))
+                        i += 1
 
-            self.logger.info(f"Wykryto {len(merged_segments)} segmentów")
-            return merged_segments
+                    # FINAL FILTER: Usuń bardzo krótkie segmenty ciszy
+                    final_segments = []
+                    for start, end, is_speech in merged_segments:
+                        duration = end - start
 
-        except Exception as e:
-            self.logger.error(f"Błąd WebRTC VAD: {e}")
-            return self._detect_speech_energy(audio_path)
-
-    def _detect_speech_energy(self, audio_path: str) -> List[Tuple[float, float, bool]]:
-        """Prosta detekcja na podstawie energii audio."""
-        self.logger.info("Używam detekcji energii audio...")
-
-        try:
-            y, sr = librosa.load(audio_path)
-
-            # Oblicz RMS energy w oknach
-            frame_length = int(sr * 0.1)  # 100ms okna
-            hop_length = int(sr * 0.05)  # 50ms przesunięcie
-
-            rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)[0]
-
-            # Próg na podstawie percentyla
-            threshold = np.percentile(rms, 30)  # 30% najcichszych fragmentów to cisza
-
-            # Konwertuj na segmenty czasowe
-            times = librosa.frames_to_time(np.arange(len(rms)), sr=sr, hop_length=hop_length)
-
-            segments = []
-            current_start = 0.0
-            current_is_speech = rms[0] > threshold
-
-            for i, (time, energy) in enumerate(zip(times, rms)):
-                is_speech = energy > threshold
-
-                if is_speech != current_is_speech:
-                    if time - current_start >= self.config.min_silence_duration:
-                        segments.append((current_start, time, current_is_speech))
-                    current_start = time
-                    current_is_speech = is_speech
-
-            # Dodaj ostatni segment
-            audio_duration = len(y) / sr
-            if audio_duration - current_start >= self.config.min_silence_duration:
-                segments.append((current_start, audio_duration, current_is_speech))
-
-            return segments
-
-        except Exception as e:
-            self.logger.error(f"Błąd detekcji energii: {e}")
-            return []
-
-    def _seconds_to_timecode(self, seconds: float, fps: int = 25) -> str:
-        """Konwertuje sekundy na timecode HH:MM:SS:FF"""
-        # Zabezpieczenie przed ujemnymi wartościami
-        seconds = max(0, seconds)
-
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        secs = int(seconds % 60)
-        frames = int((seconds % 1) * fps)
-
-        # Zabezpieczenie przed przekroczeniem fps
-        if frames >= fps:
-            frames = fps - 1
-            secs += 1
-
-        if secs >= 60:
-            secs = 0
-            minutes += 1
-
-        if minutes >= 60:
-            minutes = 0
-            hours += 1
-
-        return f"{hours:02d}:{minutes:02d}:{secs:02d}:{frames:02d}"
-
-    def generate_edl(self, results: List[dict], output_path: str):
-        """Generuje plik EDL dla DaVinci Resolve."""
-        self.logger.info(f"Generowanie EDL: {output_path}")
-
-        try:
-            with open(output_path, 'w', encoding='utf-8') as f:
-                # Nagłówek EDL
-                f.write("TITLE: Processed_Videos\n")
-                f.write("FCM: NON-DROP FRAME\n\n")
-
-                edit_number = 1
-                timeline_pos = 0.0  # Pozycja w timeline (w sekundach)
-
-                for result_idx, result in enumerate(results):
-                    if not result:
-                        continue
-
-                    source_name = result['input_name']
-                    reel_name = f"AX{result_idx + 1:03d}"  # AX001, AX002, etc.
-
-                    self.logger.info(f"Przetwarzanie EDL dla {source_name}: {len(result['timeline_data'])} segmentów")
-
-                    for segment_idx, segment in enumerate(result['timeline_data']):
-                        # Oblicz dokładny czas źródłowy
-                        source_start = segment['start']
-                        original_duration = segment.get('original_duration', segment['duration'])
-                        source_end = source_start + original_duration
-
-                        # Czas w timeline
-                        timeline_start = timeline_pos
-                        timeline_end = timeline_pos + segment['duration']
-
-                        # Konwertuj sekundy na timecode (25fps)
-                        source_in_tc = self._seconds_to_timecode(source_start, 25)
-                        source_out_tc = self._seconds_to_timecode(source_end, 25)
-                        timeline_in_tc = self._seconds_to_timecode(timeline_start, 25)
-                        timeline_out_tc = self._seconds_to_timecode(timeline_end, 25)
-
-                        # Linia EDL
-                        edit_type = "C"  # Cut
-                        track = "V"  # Video track
-
-                        f.write(f"{edit_number:03d}  {reel_name:<8} {track}     {edit_type}        ")
-                        f.write(f"{source_in_tc} {source_out_tc} {timeline_in_tc} {timeline_out_tc}\n")
-
-                        # Dodaj informacje o klipie
-                        f.write(f"* FROM CLIP NAME: {source_name}\n")
-                        f.write(f"* SEGMENT TYPE: {segment['type']}\n")
-
-                        # Dodaj informacje o efektach dla przyspieszonych segmentów
-                        if segment['speed'] != 1.0:
-                            f.write(f"* SPEED: {segment['speed']:.2f}\n")
-
-                            # Motion effect dla DaVinci (format M2)
-                            speed_percent = segment['speed'] * 100
-                            f.write(
-                                f"M2   {reel_name:<8}     050 {timeline_in_tc} {timeline_out_tc} {speed_percent:06.2f} {speed_percent:06.2f}\n")
+                        if is_speech or duration >= self.config.min_silence_duration:
+                            final_segments.append((start, end, is_speech))
                         else:
-                            f.write(f"* SPEED: 1.00 (normal)\n")
+                            # Bardzo krótka cisza - połącz z sąsiednim segmentem
+                            if final_segments:
+                                # Rozszerz poprzedni segment
+                                prev_start, prev_end, prev_is_speech = final_segments[-1]
+                                final_segments[-1] = (prev_start, end, prev_is_speech)
+                            else:
+                                # Pierwszy segment - zostaw jako mowę
+                                final_segments.append((start, end, True))
 
-                        f.write("\n")  # Pusta linia między edytami
+                    self.logger.info(f"WebRTC: {len(speech_frames)} ramek -> {len(segments)} segmentów -> {len(final_segments)} końcowych")
 
-                        self.logger.debug(f"EDL Edit {edit_number}: {source_in_tc}-{source_out_tc} -> "
-                                          f"{timeline_in_tc}-{timeline_out_tc} ({segment['type']}, {segment['speed']}x)")
+                    return final_segments
 
-                        edit_number += 1
-                        timeline_pos = timeline_end
+                except Exception as e:
+                    self.logger.error(f"Błąd WebRTC VAD: {e}")
+                    return self._detect_speech_energy(audio_path)
 
-                # Dodaj informacje o źródłach na końcu
-                f.write("* SOURCE FILE MAPPING:\n")
-                for result_idx, result in enumerate(results):
-                    if result:
-                        reel_name = f"AX{result_idx + 1:03d}"
-                        source_path = os.path.abspath(result['input_file'])
-                        f.write(f"* {reel_name}: {source_path}\n")
 
-            self.logger.info(f"✅ EDL zapisany: {output_path}")
-            self.logger.info(f"📊 Timeline zawiera {edit_number - 1} edytów")
-            self.logger.info(f"⏱️  Całkowity czas timeline: {timeline_pos:.2f}s")
+            def _detect_speech_energy(self, audio_path: str) -> List[Tuple[float, float, bool]]:
+                """Prosta detekcja na podstawie energii audio - ULEPSZONA."""
+                self.logger.info("Używam detekcji energii audio...")
 
-            # Podsumowanie segmentów
-            total_speech = sum(len([s for s in r['timeline_data'] if s['type'] == 'speech']) for r in results if r)
-            total_silence = sum(
-                len([s for s in r['timeline_data'] if s['type'] in ['silence', 'short_silence']]) for r in results if r)
-            self.logger.info(f"🎤 Segmenty mowy: {total_speech}")
-            self.logger.info(f"🔇 Segmenty ciszy: {total_silence}")
+                try:
+                    y, sr = librosa.load(audio_path)
 
-        except Exception as e:
-            self.logger.error(f"❌ Błąd generowania EDL: {e}")
-            import traceback
-            self.logger.error(f"Szczegóły błędu: {traceback.format_exc()}")
+                    # Oblicz RMS energy w większych oknach
+                    frame_length = int(sr * 0.5)  # 500ms okna (większe!)
+                    hop_length = int(sr * 0.25)   # 250ms przesunięcie
+
+                    rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)[0]
+
+                    # Próg na podstawie percentyla
+                    threshold = np.percentile(rms, 25)  # 25% najcichszych fragmentów to cisza
+
+                    # Konwertuj na segmenty czasowe
+                    times = librosa.frames_to_time(np.arange(len(rms)), sr=sr, hop_length=hop_length)
+
+                    segments = []
+                    current_start = 0.0
+                    current_is_speech = rms[0] > threshold
+
+                    for i, (time, energy) in enumerate(zip(times, rms)):
+                        is_speech = energy > threshold
+
+                        if is_speech != current_is_speech:
+                            duration = time - current_start
+                            if duration >= 0.5:  # Minimum 0.5s
+                                segments.append((current_start, time, current_is_speech))
+                                current_start = time
+                                current_is_speech = is_speech
+
+                    # Dodaj ostatni segment
+                    audio_duration = len(y) / sr
+                    if audio_duration - current_start >= 0.5:
+                        segments.append((current_start, audio_duration, current_is_speech))
+
+                    # Filtruj bardzo krótkie segmenty ciszy
+                    filtered_segments = []
+                    for start, end, is_speech in segments:
+                        duration = end - start
+                        if is_speech or duration >= self.config.min_silence_duration:
+                            filtered_segments.append((start, end, is_speech))
+
+                    self.logger.info(f"Energy: {len(segments)} segmentów -> {len(filtered_segments)} po filtracji")
+                    return filtered_segments
+
+                except Exception as e:
+                    self.logger.error(f"Błąd detekcji energii: {e}")
+                    return []
+
+
+            def _seconds_to_timecode(self, seconds: float, fps: int = 25) -> str:
+                """Konwertuje sekundy na timecode HH:MM:SS:FF - POPRAWIONA."""
+                # Zabezpieczenie przed ujemnymi wartościami
+                seconds = max(0, seconds)
+
+                hours = int(seconds // 3600)
+                minutes = int((seconds % 3600) // 60)
+                secs = int(seconds % 60)
+                frames = int((seconds % 1) * fps)
+
+                # Zabezpieczenie przed przekroczeniem fps
+                if frames >= fps:
+                    frames = fps - 1
+                    secs += 1
+
+                if secs >= 60:
+                    secs = 0
+                    minutes += 1
+
+                if minutes >= 60:
+                    minutes = 0
+                    hours += 1
+
+                return f"{hours:02d}:{minutes:02d}:{secs:02d}:{frames:02d}"
+            def generate_edl(self, results: List[dict], output_path: str):
+                """Generuje plik EDL dla DaVinci Resolve - FIX ŚCIEŻEK."""
+                self.logger.info(f"Generowanie EDL: {output_path}")
+
+                try:
+                    with open(output_path, 'w', encoding='utf-8') as f:
+                        # Nagłówek EDL
+                        f.write("TITLE: Processed_Videos\n")
+                        f.write("FCM: NON-DROP FRAME\n\n")
+
+                        edit_number = 1
+                        timeline_pos = 0.0
+
+                        for result_idx, result in enumerate(results):
+                            if not result:
+                                continue
+
+                            source_name = result['input_name']
+                            reel_name = f"AX{result_idx + 1:03d}"
+
+                            self.logger.info(f"Przetwarzanie EDL dla {source_name}: {len(result['timeline_data'])} segmentów")
+
+                            for segment_idx, segment in enumerate(result['timeline_data']):
+                                # Oblicz dokładny czas źródłowy
+                                source_start = segment['start']
+                                original_duration = segment.get('original_duration', segment['duration'])
+                                source_end = source_start + original_duration
+
+                                # Czas w timeline
+                                timeline_start = timeline_pos
+                                timeline_end = timeline_pos + segment['duration']
+
+                                # Konwertuj sekundy na timecode (25fps)
+                                source_in_tc = self._seconds_to_timecode(source_start, 25)
+                                source_out_tc = self._seconds_to_timecode(source_end, 25)
+                                timeline_in_tc = self._seconds_to_timecode(timeline_start, 25)
+                                timeline_out_tc = self._seconds_to_timecode(timeline_end, 25)
+
+                                # Linia EDL
+                                edit_type = "C"
+                                track = "V"
+
+                                f.write(f"{edit_number:03d}  {reel_name:<8} {track}     {edit_type}        ")
+                                f.write(f"{source_in_tc} {source_out_tc} {timeline_in_tc} {timeline_out_tc}\n")
+
+                                # Metadane klipu
+                                f.write(f"* FROM CLIP NAME: {source_name}\n")
+                                f.write(f"* SEGMENT TYPE: {segment['type']}\n")
+
+                                # Efekty prędkości
+                                if segment['speed'] != 1.0:
+                                    f.write(f"* SPEED: {segment['speed']:.2f}\n")
+                                    f.write(f"* OVERLAY: x{segment['speed']:.1f}\n")  # Informacja o overlay
+
+                                    # M2 effect line dla DaVinci
+                                    speed_percent = segment['speed'] * 100
+                                    f.write(f"M2   {reel_name:<8}     050 {timeline_in_tc} {timeline_out_tc} {speed_percent:06.2f} {speed_percent:06.2f}\n")
+                                else:
+                                    f.write(f"* SPEED: 1.00 (normal)\n")
+
+                                f.write("\n")
+
+                                edit_number += 1
+                                timeline_pos = timeline_end
+
+                        # KLUCZOWA ZMIANA: Poprawne ścieżki plików
+                        f.write("* SOURCE FILE MAPPING:\n")
+                        for result_idx, result in enumerate(results):
+                            if result:
+                                reel_name = f"AX{result_idx + 1:03d}"
+                                # Użyj nazwy pliku, nie pełnej ścieżki (DaVinci szuka w Media Pool)
+                                source_name = os.path.basename(result['input_file'])
+                                f.write(f"* {reel_name}: {source_name}\n")
+
+                    self.logger.info(f"✅ EDL zapisany: {output_path}")
+                    self.logger.info(f"📊 Timeline zawiera {edit_number - 1} edytów")
+                    self.logger.info(f"⏱️  Całkowity czas timeline: {timeline_pos:.2f}s")
+
+                    # Podsumowanie
+                    total_speech = sum(len([s for s in r['timeline_data'] if s['type'] == 'speech']) for r in results if r)
+                    total_silence = sum(len([s for s in r['timeline_data'] if s['type'] in ['silence', 'short_silence']]) for r in results if r)
+                    self.logger.info(f"🎤 Segmenty mowy: {total_speech}")
+                    self.logger.info(f"🔇 Segmenty ciszy: {total_silence}")
+
+                except Exception as e:
+                    self.logger.error(f"❌ Błąd generowania EDL: {e}")
+                    import traceback
+                    self.logger.error(f"Szczegóły błędu: {traceback.format_exc()}")
+
 
     def generate_avid_log(self, results: List[dict], output_path: str):
         """Generuje plik Avid Log Exchange (ALE) jako alternatywę."""
@@ -492,198 +530,213 @@ class VideoProcessor:
             return None
 
     def create_speed_overlay(self, duration: float, speed: float, size: Tuple[int, int]) -> mp.VideoClip:
-        """Tworzy overlay z tekstem prędkości bez ImageMagick."""
+        """Tworzy overlay z tekstem prędkości - WERSJA BEZ KOMPOZYCJI."""
         if speed == 1.0:
             return None
 
         text = f"x{speed:.1f}" if speed != int(speed) else f"x{int(speed)}"
 
         try:
-            # Próbuj użyć TextClip (wymaga ImageMagick)
-            txt_clip = mp.TextClip(
-                text,
-                fontsize=min(size[0], size[1]) // 20,
-                color='white',
-                font='Arial-Bold',
-                stroke_color='black',
-                stroke_width=2
-            ).set_duration(duration)
+            # ZMIANA: Tworzymy overlay bez kompozycji - będzie dodany w DaVinci
+            self.logger.info(f"Tworzę overlay '{text}' dla segmentu {duration:.2f}s")
 
-            # Pozycjonuj w prawym dolnym rogu
-            margin = min(size[0], size[1]) // 40
-            txt_clip = txt_clip.set_position((size[0] - txt_clip.w - margin, size[1] - txt_clip.h - margin))
-
-            return txt_clip
-
-        except Exception as e:
-            self.logger.warning(f"TextClip niedostępny (brak ImageMagick): {e}")
-            self.logger.info("Tworzę overlay bez tekstu - zainstaluj ImageMagick dla pełnej funkcjonalności")
-
-            # Alternatywa: kolorowy prostokąt jako wskaźnik
-            return self.create_simple_overlay(duration, speed, size)
-
-    def process_video_file(self, input_path: str, output_folder: str) -> dict:
-        """Przetwarza pojedynczy plik wideo"""
-        self.logger.info(f"Przetwarzanie: {input_path}")
-
-        try:
-            # Wczytaj wideo
-            video = mp.VideoFileClip(input_path)
-
-            # Wyodrębnij audio do tymczasowego pliku
-            temp_audio = os.path.join(output_folder, "temp_audio.wav")
-            video.audio.write_audiofile(temp_audio, verbose=False, logger=None)
-
-            # Wykryj segmenty mowy
-            segments = self.detect_speech_segments(temp_audio)
-
-            # Usuń tymczasowy plik audio
-            os.remove(temp_audio)
-
-            if not segments:
-                self.logger.warning(f"Brak segmentów w: {input_path}")
-                video.close()
-                return None
-
-            # Przetwórz segmenty - KLUCZOWA ZMIANA: zachowaj wszystkie segmenty
-            processed_clips = []
-            timeline_data = []
-
-            self.logger.info(f"Przetwarzanie {len(segments)} segmentów")
-
-            for i, (start, end, is_speech) in enumerate(segments):
-                duration = end - start
-
-                self.logger.debug(f"Segment {i + 1}: {start:.2f}-{end:.2f}s, "
-                                  f"duration={duration:.2f}s, speech={is_speech}")
-
-                # Utwórz klip dla segmentu
-                segment_clip = video.subclip(start, end)
-
-                if is_speech:
-                    # Fragment mowy - normalne tempo, BEZ OVERLAY
-                    processed_clips.append(segment_clip)
-                    timeline_data.append({
-                        'start': start,
-                        'end': end,
-                        'duration': duration,
-                        'speed': 1.0,
-                        'type': 'speech'
-                    })
-                    self.logger.debug(f"  -> Mowa: {duration:.2f}s (1.0x)")
-                else:
-                    # Fragment ciszy - przyspiesz TYLKO jeśli spełnia minimum
-                    if duration >= self.config.min_silence_duration:
-                        speed = self.config.speed_multiplier
-                        sped_clip = segment_clip.fx(mp.vfx.speedx, speed)
-
-                        # Dodaj overlay z prędkością
-                        overlay = self.create_speed_overlay(
-                            sped_clip.duration,
-                            speed,
-                            (video.w, video.h)
-                        )
-
-                        if overlay:
-                            sped_clip = mp.CompositeVideoClip([sped_clip, overlay])
-
-                        processed_clips.append(sped_clip)
-                        timeline_data.append({
-                            'start': start,
-                            'end': end,
-                            'duration': sped_clip.duration,
-                            'original_duration': duration,
-                            'speed': speed,
-                            'type': 'silence'
-                        })
-                        self.logger.debug(f"  -> Cisza: {duration:.2f}s -> {sped_clip.duration:.2f}s ({speed}x)")
-                    else:
-                        # Krótka cisza - pozostaw normalną
-                        processed_clips.append(segment_clip)
-                        timeline_data.append({
-                            'start': start,
-                            'end': end,
-                            'duration': duration,
-                            'speed': 1.0,
-                            'type': 'short_silence'
-                        })
-                        self.logger.debug(f"  -> Krótka cisza: {duration:.2f}s (1.0x)")
-
-            # Sprawdź czy mamy coś do przetworzenia
-            if not processed_clips:
-                self.logger.warning(f"Brak klipów do przetworzenia w: {input_path}")
-                video.close()
-                return None
-
-            # Połącz wszystkie klipy
-            final_video = mp.concatenate_videoclips(processed_clips)
-
-            # Przygotuj nazwy plików wyjściowych
-            input_name = Path(input_path).stem
-
-            result = {
-                'input_file': input_path,
-                'input_name': input_name,
-                'timeline_data': timeline_data,
-                'output_duration': final_video.duration,
-                'original_duration': video.duration,
-                'segments_count': len(segments),
-                'speech_segments': len([s for s in timeline_data if s['type'] == 'speech']),
-                'silence_segments': len([s for s in timeline_data if s['type'] in ['silence', 'short_silence']])
-            }
-
-            self.logger.info(f"Rezultat: {result['speech_segments']} segmentów mowy, "
-                             f"{result['silence_segments']} segmentów ciszy")
-
-            # Zapisz wideo jeśli wymagane
-            if self.config.generate_video:
-                output_video_path = os.path.join(output_folder, f"{input_name}_processed.mp4")
-                final_video.write_videofile(
-                    output_video_path,
-                    codec='libx264',
-                    audio_codec='aac',
-                    verbose=False,
-                    logger=None
-                )
-                result['output_video'] = output_video_path
-                self.logger.info(f"Zapisano wideo: {output_video_path}")
-
-            # Zamknij klipy
-            final_video.close()
-            video.close()
-
-            return result
-
-        except Exception as e:
-            self.logger.error(f"Błąd przetwarzania {input_path}: {e}")
-            import traceback
-            self.logger.error(f"Szczegóły: {traceback.format_exc()}")
-            return None
-
-    def copy_source_files_to_output(self, results: List[dict], output_folder: str):
-        """Kopiuje oryginalne pliki wideo do folderu wyjściowego."""
-        import shutil
-
-        self.logger.info("Kopiowanie oryginalnych plików do folderu wyjściowego...")
-
-        for result in results:
-            if not result:
-                continue
-
-            source_path = result['input_file']
-            source_name = os.path.basename(source_path)
-            dest_path = os.path.join(output_folder, source_name)
-
+            # Sprawdź czy ImageMagick działa
             try:
-                if not os.path.exists(dest_path):
-                    shutil.copy2(source_path, dest_path)
-                    self.logger.info(f"Skopiowano: {source_name}")
+                txt_clip = mp.TextClip(
+                    text,
+                    fontsize=max(48, min(size[0], size[1]) // 15),  # Większy tekst
+                    color='white',
+                    font='Arial-Bold',
+                    stroke_color='black',
+                    stroke_width=3
+                ).set_duration(duration)
 
-                # Zaktualizuj ścieżkę w rezultacie
-                result['input_file'] = dest_path
+                # Pozycjonuj w prawym dolnym rogu
+                margin = min(size[0], size[1]) // 30
+                txt_clip = txt_clip.set_position((size[0] - txt_clip.w - margin, size[1] - txt_clip.h - margin))
+
+                self.logger.debug(f"TextClip utworzony: {txt_clip.w}x{txt_clip.h} na {duration:.2f}s")
+                return txt_clip
 
             except Exception as e:
-                self.logger.warning(f"Nie można skopiować {source_name}: {e}")
+                self.logger.warning(f"TextClip niedostępny (ImageMagick): {e}")
+
+                # Fallback: kolorowy prostokąt
+                return self.create_simple_overlay(duration, speed, size)
+
+        except Exception as e:
+            self.logger.error(f"Błąd tworzenia overlay: {e}")
+            return None
+
+
+            def process_video_file(self, input_path: str, output_folder: str) -> dict:
+                """Przetwarza pojedynczy plik wideo - BEZ OVERLAYÓW W KLIPACH."""
+                self.logger.info(f"Przetwarzanie: {input_path}")
+
+                try:
+                    # Wczytaj wideo
+                    video = mp.VideoFileClip(input_path)
+
+                    # Wyodrębnij audio do tymczasowego pliku
+                    temp_audio = os.path.join(output_folder, "temp_audio.wav")
+                    video.audio.write_audiofile(temp_audio, verbose=False, logger=None)
+
+                    # Wykryj segmenty mowy
+                    segments = self.detect_speech_segments(temp_audio)
+
+                    # Usuń tymczasowy plik audio
+                    os.remove(temp_audio)
+
+                    if not segments:
+                        self.logger.warning(f"Brak segmentów w: {input_path}")
+                        video.close()
+                        return None
+
+                    # ZMIANA: Nie tworzymy fizycznego wideo z overlayami
+                    # Tylko zbieramy informacje dla EDL
+                    timeline_data = []
+
+                    self.logger.info(f"Przetwarzanie {len(segments)} segmentów")
+
+                    for i, (start, end, is_speech) in enumerate(segments):
+                        duration = end - start
+
+                        self.logger.debug(f"Segment {i+1}: {start:.2f}-{end:.2f}s, "
+                                        f"duration={duration:.2f}s, speech={is_speech}")
+
+                        if is_speech:
+                            # Fragment mowy - normalne tempo
+                            timeline_data.append({
+                                'start': start,
+                                'end': end,
+                                'duration': duration,
+                                'speed': 1.0,
+                                'type': 'speech',
+                                'has_overlay': False
+                            })
+                            self.logger.debug(f"  -> Mowa: {duration:.2f}s (1.0x)")
+                        else:
+                            # Fragment ciszy - przyspiesz TYLKO jeśli spełnia minimum
+                            if duration >= self.config.min_silence_duration:
+                                speed = self.config.speed_multiplier
+                                new_duration = duration / speed
+
+                                timeline_data.append({
+                                    'start': start,
+                                    'end': end,
+                                    'duration': new_duration,
+                                    'original_duration': duration,
+                                    'speed': speed,
+                                    'type': 'silence',
+                                    'has_overlay': True  # Informacja dla DaVinci
+                                })
+                                self.logger.debug(f"  -> Cisza: {duration:.2f}s -> {new_duration:.2f}s ({speed}x)")
+                            else:
+                                # Krótka cisza - pozostaw normalną
+                                timeline_data.append({
+                                    'start': start,
+                                    'end': end,
+                                    'duration': duration,
+                                    'speed': 1.0,
+                                    'type': 'short_silence',
+                                    'has_overlay': False
+                                })
+                                self.logger.debug(f"  -> Krótka cisza: {duration:.2f}s (1.0x)")
+
+                    # Oblicz całkowity czas wyjściowy
+                    output_duration = sum(segment['duration'] for segment in timeline_data)
+
+                    # Przygotuj nazwy plików wyjściowych
+                    input_name = Path(input_path).stem
+
+                    result = {
+                        'input_file': input_path,
+                        'input_name': input_name,
+                        'timeline_data': timeline_data,
+                        'output_duration': output_duration,
+                        'original_duration': video.duration,
+                        'segments_count': len(segments),
+                        'speech_segments': len([s for s in timeline_data if s['type'] == 'speech']),
+                        'silence_segments': len([s for s in timeline_data if s['type'] in ['silence', 'short_silence']])
+                    }
+
+                    self.logger.info(f"Rezultat: {result['speech_segments']} segmentów mowy, "
+                                    f"{result['silence_segments']} segmentów ciszy")
+                    self.logger.info(f"Czas: {video.duration:.2f}s -> {output_duration:.2f}s")
+
+                    # Opcjonalnie: zapisz przetworzone wideo (tylko jeśli requested)
+                    if self.config.generate_video:
+                        self.logger.info("Generowanie wideo z overlayami...")
+                        processed_clips = []
+
+                        for segment in timeline_data:
+                            segment_clip = video.subclip(segment['start'], segment['start'] + segment.get('original_duration', segment['duration']))
+
+                            if segment['speed'] != 1.0:
+                                segment_clip = segment_clip.fx(mp.vfx.speedx, segment['speed'])
+
+                                # Dodaj overlay tylko do wideo (nie do EDL)
+                                overlay = self.create_speed_overlay(
+                                    segment_clip.duration,
+                                    segment['speed'],
+                                    (video.w, video.h)
+                                )
+
+                                if overlay:
+                                    segment_clip = mp.CompositeVideoClip([segment_clip, overlay])
+
+                            processed_clips.append(segment_clip)
+
+                        if processed_clips:
+                            final_video = mp.concatenate_videoclips(processed_clips)
+                            output_video_path = os.path.join(output_folder, f"{input_name}_processed.mp4")
+                            final_video.write_videofile(
+                                output_video_path,
+                                codec='libx264',
+                                audio_codec='aac',
+                                verbose=False,
+                                logger=None
+                            )
+                            result['output_video'] = output_video_path
+                            self.logger.info(f"Zapisano wideo: {output_video_path}")
+                            final_video.close()
+
+                    # Zamknij klip
+                    video.close()
+                    return result
+
+                except Exception as e:
+                    self.logger.error(f"Błąd przetwarzania {input_path}: {e}")
+                    import traceback
+                    self.logger.error(f"Szczegóły: {traceback.format_exc()}")
+                    return None
+
+
+            def copy_source_files_to_output(self, results: List[dict], output_folder: str):
+                """Kopiuje oryginalne pliki wideo do folderu wyjściowego - POPRAWIONE ŚCIEŻKI."""
+                import shutil
+
+                self.logger.info("Kopiowanie oryginalnych plików do folderu wyjściowego...")
+
+                for result in results:
+                    if not result:
+                        continue
+
+                    source_path = result['input_file']
+                    source_name = os.path.basename(source_path)
+                    dest_path = os.path.join(output_folder, source_name)
+
+                    try:
+                        if not os.path.exists(dest_path):
+                            shutil.copy2(source_path, dest_path)
+                            self.logger.info(f"Skopiowano: {source_name}")
+
+                        # KLUCZOWA ZMIANA: Zaktualizuj ścieżkę na względną nazwę pliku
+                        result['input_file'] = source_name  # Tylko nazwa pliku, nie pełna ścieżka
+
+                    except Exception as e:
+                        self.logger.warning(f"Nie można skopiować {source_name}: {e}")
+
 
     def generate_fcpxml(self, results: List[dict], output_path: str):
         """Generuje plik FCPXML dla DaVinci Resolve."""
@@ -830,8 +883,6 @@ class VideoProcessor:
             self.logger.error(f"Błąd generowania FCPXML: {e}")
             import traceback
             self.logger.error(f"Szczegóły błędu: {traceback.format_exc()}")
-
-
 
     def combine_videos(self, results: List[dict], output_path: str):
         """Łączy wszystkie przetworzone wideo w jeden plik."""
