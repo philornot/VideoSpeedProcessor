@@ -1,28 +1,19 @@
-# Podstawowe biblioteki do przetwarzania wideo i audio
+# Video Speed Processor - Wymagane biblioteki
+
+# Podstawowe biblioteki (wymagane)
 moviepy>=1.0.3
 librosa>=0.10.0
 numpy>=1.24.0
 
-# Detekcja mowy - opcjonalne (wybierz jedną lub obie)
-webrtcvad>=2.0.10  # Szybka detekcja VAD
-openai-whisper>=20231117  # Dokładna detekcja Whisper (wymaga więcej zasobów)
+# Opcjonalne biblioteki dla lepszej funkcjonalności
+# Usuń komentarz (#) aby zainstalować:
 
-# Dodatkowe zależności audio
-soundfile>=0.12.1
+# Dla szybkiej detekcji mowy (zalecane dla gamingu)
+webrtcvad>=2.0.10
+
+# Dla dokładnej detekcji mowy (zalecane dla podcastów)
+# openai-whisper>=20231117
+
+# Dodatkowe biblioteki wspierające
 scipy>=1.10.0
-
-# Narzędzia systemowe
-pathlib2>=2.3.7; python_version < '3.4'
-
-# Opcjonalne: progressbar dla lepszego UX
-tqdm>=4.64.0
-
-# Dla instalatora ImageMagick
-requests>=2.28.0
-
-# UWAGA: ImageMagick jest wymagany do overlayów tekstowych
-# Zainstaluj przez:
-# - Windows: choco install imagemagick
-# - Ubuntu: sudo apt-get install imagemagick
-# - Mac: brew install imagemagick
-# Lub uruchom: python install_imagemagick.py
+soundfile>=0.12.0

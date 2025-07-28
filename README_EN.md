@@ -1,237 +1,320 @@
-# Video Speed Processor
+# 🎥 Video Speed Processor
 
-Automatically process recordings - speed up silent segments while maintaining editability in DaVinci Resolve.
+> **Automatically speed up silence in video recordings with a GUI**
+> Save editing time — speed up only the silent parts and keep speech natural!
 
-## 🎯 Project Goal
-
-This program automatically detects silent segments in video recordings, speeds them up (e.g., x3) with visible text overlay, and exports to DaVinci Resolve in an editable format. This allows you to quickly prepare recordings for further editing without losing quality and timeline control.
-
-## ✨ Features
-
-- **🎤 Intelligent speech detection** - WebRTC VAD or Whisper AI
-- **⚡ Silence acceleration** - configurable speed (x2, x3, x5...)
-- **📺 Text overlay** - visible multiplier "x3" in bottom right corner
-- **🎬 DaVinci Resolve export** - FCPXML format with preserved editability
-- **📁 Batch processing** - process multiple folders simultaneously
-- **🎞️ Ready MP4 files** - optionally with built-in overlays
-
-## 📋 Requirements
-
-- **Python 3.11+**
-- **FFmpeg** (in PATH)
-- **Windows 10/11** (primarily tested)
-
-### FFmpeg Installation
-```bash
-# Via chocolatey (recommended)
-choco install ffmpeg
-
-# Manually: download from https://ffmpeg.org/ and add to PATH
-```
-
-## 🚀 Installation
-
-1. **Clone repository**
-   ```bash
-   git clone <repo-url>
-   cd video-speed-processor
-   ```
-
-2. **Create virtual environment**
-   ```bash
-   python -m venv venv
-   venv\Scripts\activate  # Windows
-   source venv/bin/activate  # Linux/Mac
-   ```
-
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Optional: Whisper for better detection**
-   ```bash
-   pip install openai-whisper
-   ```
-
-## 💻 Usage
-
-### Basic Usage
-```bash
-# Process all MP4 files from folder, speeding up silence x3
-python video_processor.py --input_folder "videos/" --speed_multiplier 3.0
-
-# Also generate ready MP4 files
-python video_processor.py --input_folder "clips/" --speed_multiplier 2.5 --generate_video
-
-# Use Whisper for better speech detection
-python video_processor.py --input_folder "input/" --speed_multiplier 3.0 --use_whisper
-```
-
-### CLI Parameters
-
-| Parameter | Description | Default | Example |
-|-----------|-------------|---------|---------|
-| `--input_folder` | Folder with MP4 files *(required)* | - | `videos/` |
-| `--output_folder` | Output folder | `output` | `processed/` |
-| `--speed_multiplier` | Silence multiplier *(required)* | - | `3.0` |
-| `--min_silence_duration` | Min. silence length (s) | `1.5` | `2.0` |
-| `--generate_video` | Generate MP4 files | `False` | `--generate_video` |
-| `--generate_timeline` | Generate FCPXML | `True` | `--generate_timeline` |
-| `--combine_clips` | Combine all clips | `False` | `--combine_clips` |
-| `--use_whisper` | Use Whisper AI | `False` | `--use_whisper` |
-| `--debug` | Debug mode | `False` | `--debug` |
-
-### Batch Processing
-```bash
-# Process all folders with recordings
-python batch_processor.py --input_root "D:\Recordings\awesomegameplayclips" --speed_multiplier 3.0
-
-# With automatic confirmation
-python batch_processor.py --input_root "recordings/" --speed_multiplier 2.5 --auto_confirm
-```
-
-## 📁 Output Structure
-
-```
-output/
-├── timeline.fcpxml              # Timeline for DaVinci Resolve
-├── timeline_data.json           # Technical segment data
-├── video1_processed.mp4         # Processed video (optional)
-├── video2_processed.mp4         # ...
-├── combined_video.mp4           # Combined video (optional)
-└── video_processor.log          # Processing logs
-```
-
-## 🎬 DaVinci Resolve Import
-
-### Method 1: FCPXML Timeline (recommended) ⭐
-1. **File → Import → Timeline**
-2. Select `timeline.fcpxml`
-3. Timeline will be imported with all segments and speed effects
-4. Original MP4 files must be accessible
-
-### Method 2: Ready MP4 Files
-1. Import processed `.mp4` files to Media Pool
-2. Drag to timeline
-3. "x3" overlay is built into the video
-
-### Method 3: Combined Video
-1. Import `combined_video.mp4`
-2. Ready for further editing
-
-## ⚙️ Configuration for Different Content
-
-| Recording Type | Speed Multiplier | Min Silence | Detection |
-|----------------|------------------|-------------|-----------|
-| 🎮 Gaming with commentary | 2.5-3.0 | 1.5s | WebRTC |
-| 📚 Tutorial/Presentation | 2.0-2.5 | 2.0s | Whisper |
-| 🎙️ Podcast/Conversation | 1.5-2.0 | 1.0s | Whisper |
-| 🎮 Gameplay without voice | 4.0-5.0 | 3.0s | WebRTC |
-
-## 🔧 Troubleshooting
-
-### FFmpeg not working
-```bash
-# Check installation
-ffmpeg -version
-
-# Install via chocolatey
-choco install ffmpeg
-```
-
-### Missing libraries
-```bash
-# Reinstall requirements
-pip install -r requirements.txt
-
-# Or basic ones
-pip install moviepy librosa numpy
-```
-
-### No silence segments
-- Decrease `--min_silence_duration` (e.g., 1.0)
-- Enable `--debug` for diagnostics
-- Try `--use_whisper`
-
-### Memory issues
-- Process smaller files
-- Close other applications
-- Consider increasing RAM
-
-## 📈 Example Workflow
-
-### 1. Preparation
-```bash
-# Copy recordings to folder
-mkdir input
-copy "C:\Users\Username\Videos\*.mp4" input\
-```
-
-### 2. Processing
-```bash
-python video_processor.py \
-    --input_folder input/ \
-    --output_folder processed/ \
-    --speed_multiplier 3.0 \
-    --generate_video \
-    --use_whisper
-```
-
-### 3. DaVinci Import
-1. **File → Import → Timeline** → `processed/timeline.fcpxml`
-2. Edit color grading and effects
-3. **Deliver** → Final export
-
-## 🎨 Overlay Customization
-
-In `video_processor.py` you can modify the "x3" text appearance:
-
-```python
-# In create_speed_overlay() function
-txt_clip = mp.TextClip(
-    text,
-    fontsize=50,           # Size
-    color='yellow',        # Color
-    font='Arial-Black',    # Font
-    stroke_color='red',    # Stroke color
-    stroke_width=3         # Stroke width
-)
-
-# Change position (top left corner)
-txt_clip = txt_clip.set_position((margin, margin))
-```
-
-## 📊 Performance
-
-**Estimated processing time:**
-- **5-minute video**: 2-5 min (WebRTC) / 5-15 min (Whisper)
-- **30-minute video**: 10-20 min (WebRTC) / 30-60 min (Whisper)
-
-*Depends on: computer power, amount of silence, audio quality*
-
-## 🤝 Support
-
-### Diagnostics
-```bash
-# Enable debug mode
-python video_processor.py --input_folder videos/ --speed_multiplier 3.0 --debug
-
-# Check logs
-cat video_processor.log  # Linux/Mac
-type video_processor.log  # Windows
-```
-
-### Common Issues
-1. **FFmpeg** - check `ffmpeg -version`
-2. **Libraries** - check `pip list`
-3. **Segmentation** - use `--debug`
-4. **Memory** - process smaller files
-
-## 📄 License
-
-MIT License - you can freely use and modify.
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Status](https://img.shields.io/badge/Status-Stable-brightgreen.svg)](https://github.com)
 
 ---
 
-**Happy editing! 🎬✨**
+## 🎯 What is this?
+
+**Video Speed Processor** is a tool for content creators that automatically:
+
+* 🎤 **Detects silent parts** in video recordings
+* ⚡ **Speeds them up 2-5x** with visible overlay
+* 🎬 **Exports a ready timeline** to DaVinci Resolve
+* 💾 **Saves time** on tedious editing
+
+### Before / After
+
+| Without this tool                    | With this tool                               |
+| ------------------------------------ | -------------------------------------------- |
+| ⏱️ 45 min recording → 45 min editing | ⏱️ 45 min recording → **25 min** final video |
+| 🔄 Manual trimming of every pause    | 🤖 **Automatic** detection and speeding      |
+| 😫 Long, boring pauses               | ⚡ **Dynamic** transitions with overlays      |
+
+---
+
+## ✨ Features
+
+### 🖥️ Simple GUI
+
+* No CLI - everything in one window
+* Drag & drop folders
+* Live preview of detected files
+* Smart progress bar with ETA
+
+### 🧠 Smart speech detection
+
+* **🤖 Whisper AI** - most accurate (multi-language)
+* **⚡ WebRTC VAD** - fastest (real-time)
+* **📊 Energy analysis** - fallback option (always works)
+
+### 🎨 Professional overlays
+
+* Visible "x3" indicator in corner
+* Auto-resizes to video resolution
+* Fallback to colored boxes (no ImageMagick required)
+* Customizable colors and position
+
+### 🎬 Pro-level export
+
+* **EDL timeline** - native for DaVinci Resolve
+* **Ready MP4 files** - with built-in overlays
+* **Frame-accurate timecode**
+* **Batch processing** - hundreds of files at once
+
+---
+
+## 🚀 Getting Started
+
+### 1. Installation (5 minutes)
+
+```bash
+# Clone the repo
+git clone <repo-url>
+cd video-speed-processor
+
+# Install everything in one command
+pip install -r requirements.txt
+
+# DONE! Run the program
+python video_speed_processor.py
+```
+
+### 2. First Use
+
+1. 📁 Select a folder with MP4 files
+2. ⚙️ Set speed (default: 3x is ideal for most)
+3. 🚀 Click "Process" and wait
+4. 🎬 Import to DaVinci: `File → Import → Timeline → timeline.edl`
+
+### 3. Done!
+
+Your timeline with automatic speed effects is ready for further editing!
+
+---
+
+## 📋 System Requirements
+
+### Minimum ✅
+
+* **Python 3.11+**
+* **FFmpeg** (in PATH)
+* **4GB RAM**
+* **Windows 10/macOS 10.15/Ubuntu 20.04**
+
+### Recommended 🚀
+
+* **Python 3.12**
+* **8GB+ RAM**
+* **SSD** (faster processing)
+* **Dedicated GPU** (for Whisper)
+
+---
+
+## 🎞️ Interface Overview
+
+```
+┌─ Video Speed Processor ─────────────────────────────┐
+│ Status: ✅ All libraries OK                         │
+├─────────────────────────────────────────────────────┤
+│ 📁 Input folder: [videos/]              [Browse]     │
+│    ✅ Found 15 MP4 files (2.3 GB)                  │
+│                                                    │
+│ 📤 Output folder: [output/]              [Browse]    │
+├─────────────────────────────────────────────────────┤
+│ ⚙️ Settings:                                        │
+│    Speed:             [●────────] 3.0x              │
+│    Min silence:       [●──────] 1.5s                │
+│    Detection:         (●) WebRTC  ( ) Whisper       │
+│                                                    │
+│ 📤 Output: [✓] MP4 Video  [✓] EDL Timeline          │
+├─────────────────────────────────────────────────────┤
+│ [🚀 Start] [⏹️ Stop] [❓ Help] [📁 Results]        │
+├─────────────────────────────────────────────────────┤
+│ 📊 Progress: Processing video_05.mp4 (8/15)         │
+│ ████████████████░░░░ 75% | ETA: ~3 min              │
+├─────────────────────────────────────────────────────┤
+│ 📋 Logs:                                   [Clear]   │
+│ [10:30] ✅ Done: gameplay_intro.mp4                 │
+│ [10:32] ⚡ WebRTC: 23 segments in 2.1s              │
+│ [10:35] 🎬 Overlay added: x3 (45 segments)          │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🔧 Config Examples
+
+| 🎥 Video Type                | ⚡ Speed | ⏱ Min. Silence | 🧠 Detection | 💡 Why                                |
+| ---------------------------- | ------- | -------------- | ------------ | ------------------------------------- |
+| **🎮 Gaming + Commentary**   | `3.0x`  | `1.5s`         | WebRTC       | Fast detection of speech pauses       |
+| **📚 Tutorial/Presentation** | `2.5x`  | `2.0s`         | Whisper      | Precise detection of technical speech |
+| **🎧 Podcast/Interview**     | `2.0x`  | `1.0s`         | Whisper      | Natural pacing for conversations      |
+| **🎬 Gameplay no speech**    | `5.0x`  | `3.0s`         | WebRTC       | Aggressive cut of loading/menu parts  |
+| **📹 Vlog/Lifestyle**        | `2.0x`  | `1.5s`         | Whisper      | Keeps natural vibe                    |
+
+---
+
+## 🎬 DaVinci Resolve Import
+
+### Method 1: EDL Timeline ⭐ *Recommended*
+
+```bash
+1. File → Import → Timeline → Pre-Conform
+2. Select: output/timeline.edl
+3. ✅ Done! Effects applied automatically
+```
+
+### Method 2: MP4 with overlays
+
+```bash
+1. Import *_processed.mp4 to Media Pool
+2. Drag onto timeline
+3. Overlays already baked into the video
+```
+
+---
+
+## 🔍 Troubleshooting
+
+<details>
+<summary><strong>"No MP4 files found"</strong></summary>
+
+**Fixes:**
+
+* Check folder path and content
+* Rename files to lowercase `.mp4`
+* Ensure read permissions
+
+</details>
+
+<details>
+<summary><strong>"FFmpeg not working"</strong></summary>
+
+**Fixes:**
+
+* Check installation: `ffmpeg -version`
+* Add to PATH if needed
+
+</details>
+
+<details>
+<summary><strong>"No silent segments detected"</strong></summary>
+
+**Fixes:**
+
+* Lower min silence to `1.0s`
+* Try different detection method
+* Check logs for debug info
+
+</details>
+
+<details>
+<summary><strong>"App freezes or crashes"</strong></summary>
+
+**Causes:**
+
+* Low RAM or large video
+* Use WebRTC instead of Whisper
+* Ensure enough disk space
+
+</details>
+
+---
+
+## 📊 Performance Tips
+
+| 🎥 Length  | 🧠 WebRTC   | 🤖 Whisper | 💻 System       |
+| ---------- | ----------- | ---------- | --------------- |
+| 5 minutes  | 30s - 2 min | 2-8 min    | i5 + 8GB RAM    |
+| 30 minutes | 3-10 min    | 15-45 min  | i5 + 8GB RAM    |
+| 2 hours    | 20-40 min   | 1-3 hrs    | i5 + 8GB RAM    |
+| 5 minutes  | 15s - 1 min | 1-4 min    | i7 + 16GB + GPU |
+
+**Speed it up:**
+
+* Prefer WebRTC over Whisper
+* Close unused apps
+* Use SSD
+* More RAM = less swapping
+* Process fewer files at a time
+
+---
+
+## 🚑 Support
+
+* **GitHub Issues** - bugs and feature requests
+* **GitHub Discussions** - questions and tips
+* **Wiki** - in-depth guides
+* **Twitter/X** - news and updates
+
+To report a bug:
+
+```bash
+python --version
+ffmpeg -version
+pip list | grep -E "(moviepy|librosa|whisper|webrtc)"
+cat video_processor.log
+```
+
+---
+
+## 📈 Example Use Cases
+
+### 🎮 Gaming Creator
+
+```
+Problem: 45-minute gameplay with long pauses
+Solution: Speed 3x, WebRTC, export to YouTube
+Result: 25-minute dynamic cut with overlay x3
+```
+
+### 📚 Online Instructor
+
+```
+Problem: 90-minute training with thinking pauses
+Solution: Speed 2x, Whisper, export to LMS
+Result: 65-minute tight presentation
+```
+
+### 🎧 Podcaster
+
+```
+Problem: 120-min interview with pauses
+Solution: Speed 1.5x, Whisper, mild trimming
+Result: 95-minute natural flow
+```
+
+---
+
+## 📄 License
+
+MIT License — Free to use, modify, distribute.
+
+Just keep:
+
+* 📋 Original copyright
+* 📋 Copy of license
+
+Uses FFmpeg (LGPL) and OpenAI Whisper (MIT).
+
+---
+
+## 💕 Credits
+
+Made possible thanks to amazing open-source projects:
+
+* 🎬 **MoviePy** - Python video editing
+* 🎵 **Librosa** - Audio analysis
+* 🤖 **OpenAI Whisper** - Speech recognition
+* ⚡ **WebRTC VAD** - Voice detection
+* 🔧 **FFmpeg** - Multimedia processing
+
+## 🎥 Setup
+
+```bash
+git clone https://github.com/philornot/VideoSpeedProcessor
+cd video-speed-processor
+pip install -r requirements.txt
+python video_speed_processor.py
+```
+
+**First launch may take a few minutes (downloads models).**
+
+**Happy editing! ✨**

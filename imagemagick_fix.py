@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 URUCHOM MNIE JEŚLI MASZ PROBLEM Z ImageMagick
-Naprawa ImageMagick - modyfikuje bezpośrednio video_processor.py
+Naprawa ImageMagick - modyfikuje bezpośrednio video_speed_processor.py
 """
 
 import os
@@ -76,17 +76,17 @@ def find_imagemagick():
 
 
 def modify_video_processor():
-    """Modyfikuje video_processor.py aby na pewno używał ImageMagick."""
+    """Modyfikuje video_speed_processor.py aby na pewno używał ImageMagick."""
 
     magick_path = find_imagemagick()
     if not magick_path:
         print("❌ Nie można naprawić - brak ImageMagick")
         return False
 
-    print(f"🔧 Modyfikuję video_processor.py...")
+    print(f"🔧 Modyfikuję video_speed_processor.py...")
 
     # Przeczytaj obecny plik
-    with open('video_processor.py', 'r', encoding='utf-8') as f:
+    with open('video_speed_processor.py', 'r', encoding='utf-8') as f:
         content = f.read()
 
     # Znajdź linię z importami zewnętrznymi
